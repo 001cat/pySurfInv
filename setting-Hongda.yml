@@ -1,0 +1,24 @@
+water:
+  type: 'water'
+  h:    [2,'fixed']
+  vp:   [1.475,'fixed']
+sediment:
+  type: 'constant'
+  h:    [1,'abs',1.0,0.1]
+  vs:   [1,'abs',1.0,0.01]
+  vpvs: [2,'fixed']
+crust:
+  type: 'linear'
+  h:    [7,'fixed']
+  vs:  [[3.25, 'fixed'],
+        [3.94, 'fixed']]
+  vpvs: [1.80,'fixed']
+mantle:
+  type: 'Bspline'
+  h:    [200,'total']
+  vs:   [[4.4, 'rel', 10, 0.02],
+         [4.0, 'rel', 10, 0.02],
+         [4.3, 'rel', 10, 0.02],
+         [4.5, 'rel', 5, 0.02]]
+  vpvs: [1.76,'fixed']
+  

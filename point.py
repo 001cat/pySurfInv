@@ -152,12 +152,10 @@ class SurfDisp():
             self.uncer = np.zeros(len(per))
         else:
             self.uncer = np.array(uncer)
-
     @property
     def N(self):
         '''Number of periods'''
         return len(self.per)
-
     def setDisp(self,per=[],vel=[],uncer=None,wtype=None,ctype=None):
         if wtype is None:
             wtype = self.wtype
@@ -175,7 +173,6 @@ class randomWalkFloat(float):
         return super().__new__(cls,v)
     def __init__(self,v,vmin=None,vmax=None,step=None) -> None:
         self.vmin,self.vmax,self.step = vmin,vmax,step
-
     def reset(self,resetype='origin'):
         if self.vmin == None:
             vNew = float(self)
@@ -270,7 +267,6 @@ class surfLayer(object):
         else:
             self._bspl = bsplBasis(z,nBasis,deg)
         return self._bspl
-        
     def _hProfile(self):
         return np.array([self.H/self.nFine]*self.nFine)
     def _vsProfile(self):
@@ -314,7 +310,6 @@ class surfLayer(object):
             qs  = [150.]   *self.nFine
             qp  = [1400.]  *self.nFine
         return np.array([h,vs,vp,rho,qs,qp])
-
     def _perturb(self):
         for paraKey in self.paraDict.keys():
             if type(self.paraDict[paraKey]) is not list:
@@ -325,7 +320,6 @@ class surfLayer(object):
         newLayer = self.copy()
         newLayer._perturb()
         return newLayer
-    
     def _reset(self,resetype='origin'):
         for paraKey in self.paraDict.keys():
             if type(self.paraDict[paraKey]) is not list:
@@ -336,7 +330,6 @@ class surfLayer(object):
         newLayer = self.copy()
         newLayer._reset(resetype=resetype)
         return newLayer
-
     def plotProfile(self,type='vs'):
         h,vs,vp,rho,qs,qp = self.genProfile()
         if type == 'vs':
@@ -643,7 +636,6 @@ class PostPoint(Point):
         if npzPriori is not None:
             tmp = np.load(npzPriori,allow_pickle=True)['mcTrack']
             self.Priparas = tmp[:,3:]
-
     def loadpyMCinv(self,dsetFile,id,invDir,priDir=None):
         from MCinv.ocean_surf_dbase import invhdf5
         setting_Hongda_pyMCinv = {'water': {'type': 'water',
@@ -715,10 +707,6 @@ class PostPoint(Point):
             invdata    = inarr['arr_0']
             paraval       = invdata[:,2:11]
             self.Priparas = paraval[:,colOrder]
-    # @property
-    # def T(self):
-    #     return self.obs['RayPhase']['T']
-
     def plotDisp(self):
         T,vel,uncer = self.obs['RayPhase']['T'],self.obs['RayPhase']['c'],\
                       self.obs['RayPhase']['uncer']
@@ -746,7 +734,6 @@ class PostPoint(Point):
         self.minMod.plotProfile(fig=fig,label='Min')
         plt.xlim(3.8,4.8)
         plt.legend()
-    
     def plotCheck(self):
         pass
         ''' plot likelihood '''
@@ -826,18 +813,3 @@ if __name__ == '__main__':
     # # pHD.plotDistrib()
     # # pHD.plotVsProfile()
     # pHD.initMod.show()
-
-    setting = settingDict(); setting.load('setting-Hongda.yml')
-    mod1 = model1D(); mod1.loadSetting(setting)
-    inProfile = mod1.genProfile()
-    wavetype='Ray'
-    periods=[5,10,20,40,60,80]
-
-    ind = np.where(inProfile[0]>1e-3)[0]    #1e-5 gives wrong dispersion in Daruk
-    h,Vs,Vp,rho,qs,qp = inProfile[:,ind]
-    qsinv			= 1./qs
-    nper			= len(periods)
-    per 			= np.zeros(200, dtype=np.float64)
-    per[:nper]		= periods[:]
-    nlay			= h.size
-    (ur0,ul0,cr0,cl0)       = fast_surf.fast_surf(nlay, 2, Vp, Vs, rho, h, qsinv, per, nper)

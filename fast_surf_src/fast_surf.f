@@ -194,7 +194,7 @@ c        write(*,*) "now finish calcul"
         if(kind.eq.2) n_R_out=kmax
         if(kind.eq.1) n_L_out=kmax
 
-	do i=1,kmax
+	do i=1,min(imax(1),kmax)
 	  if(kind.eq.1) then 
 	    cL0(i) = cL(i,1)
             uL0(i) = uL(i,1)

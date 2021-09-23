@@ -10,7 +10,7 @@ from Triforce.pltHead import *
 import sys; sys.path.append('../')
 import pySurfInv.fast_surf as fast_surf
 
-def layerPlot(h,v,fig=None,label=None):
+def plotLayer(h,v,fig=None,label=None):
     if fig is None:
         fig = plt.figure(figsize=[5,7])
     else:
@@ -209,12 +209,14 @@ def genRWFList(inList):
             v,vtype = inList[i]
         if vtype == 'rel':
             vmin,vmax = v*(1-lim/100),v*(1+lim/100)
-            outList.append(randomWalkFloat(v,vmin,vmax,step))
         elif vtype == 'abs':
             vmin,vmax = v-lim,v+lim
-            outList.append(randomWalkFloat(v,vmin,vmax,step))
+            vmin = max(0,vmin)
         elif vtype == 'fixed' or vtype == 'default' or vtype == 'total':
-            outList.append(randomWalkFloat(v,None,None,0))
+            vmin,vmax,step = None,None,0
+        else:
+            raise ValueError()
+        outList.append(randomWalkFloat(v,vmin,vmax,step))
     if len(outList) == 1:
         outList = outList[0]
     return outList
@@ -247,7 +249,7 @@ class surfLayer(object):
         elif self.mtype == 'constant':
             nFine = 1 if type(self.vs) is not list else len(self.vs)
         elif self.mtype == 'linear':
-            nFine = min(20,int(self.H/1.0)) if self.H > 10 else max(int(self.H/0.5),2)
+            nFine = min(20,int(self.H/1.0)) if self.H > 10 else max(int(self.H/1),2)
         elif self.mtype == 'Bspline':
             if self.H >= 150:
                 nFine = 60
@@ -333,7 +335,7 @@ class surfLayer(object):
     def plotProfile(self,type='vs'):
         h,vs,vp,rho,qs,qp = self.genProfile()
         if type == 'vs':
-            layerPlot(h,vs);plt.title('Vs')
+            plotLayer(h,vs);plt.title('Vs')
         else:
             print('To be added...')
     def copy(self):
@@ -356,6 +358,8 @@ def _calForward(inProfile,wavetype='Ray',periods=[5,10,20,40,60,80]):
     nlay			= h.size
     (ur0,ul0,cr0,cl0)       = fast_surf.fast_surf(nlay, ilvry, Vp, Vs, rho, h, qsinv, per, nper)
     
+    if np.any(cr0[:nper]<0.01):
+        return None
     return cr0[:nper]
     # phDisp = SurfDisp(period,cr0[:nper],wtype=wavetype,ctype='Phase')
     # grDisp = SurfDisp(period,ur0[:nper],wtype=wavetype,ctype='Group')
@@ -419,12 +423,16 @@ class model1D(object):
     def plotProfile(self,type='vs',**kwargs):
         h,vs,vp,rho,qs,qp = self.genProfile()
         if type == 'vs':
-            fig = layerPlot(h,vs,**kwargs);plt.title('Vs')
+            fig = plotLayer(h,vs,**kwargs);plt.title('Vs')
         else:
             print('To be added...')
         return fig
     def forward(self,periods=[5,10,20,40,60,80]):
-        return _calForward(self.genProfile(),wavetype='Ray',periods=periods)
+        pred = _calForward(self.genProfile(),wavetype='Ray',periods=periods)
+        if pred is None:
+            print(f'Warning: Forward not complete! Model listed below:')
+            self.show()
+        return pred
     def copy(self):
         return copy.deepcopy(self)
     def isgood(self):
@@ -433,9 +441,13 @@ class model1D(object):
             ltypes.extend([layer.type]*layer.nFine)
         ltypes = np.array(ltypes)
         h,vs,vp,rho,qs,qp = self.genProfile()
+        vsSediment = vs[ltypes=='sediment']
         vsCrust = vs[ltypes=='crust']
         vsMantle = vs[ltypes=='mantle']
 
+        # Vs in sediment > 0.2; from Lili's code
+        if np.any(vsSediment<0.2):
+            return False
         # Vs jump between layer is positive, contraint (5) in 4.2 of Shen et al., 2012
         for i in np.where((ltypes[1:]!=ltypes[:-1]))[0]:
             if vs[i+1] < vs[i]:
@@ -535,6 +547,8 @@ class Point(object):
             model = self.initMod
         T = self.obs['RayPhase']['T']
         cP = model.forward(periods=T)
+        if cP is None:
+            return 88888,0
         cO = self.obs['RayPhase']['c']
         uncer = self.obs['RayPhase']['uncer']
         N = len(T)
@@ -813,3 +827,18 @@ if __name__ == '__main__':
     # # pHD.plotDistrib()
     # # pHD.plotVsProfile()
     # pHD.initMod.show()
+
+    id     = '233.0_43.2'
+    T = [ 10.,  12.,  14.,  16.,  18.,  20.,  22.,  24.,  26.,  28.,  30.,
+        32.,  36.,  40.,  50.,  60.,  70.,  80.]
+    vel = [ 3.66170009,  3.72857888,  3.75951126,  3.76266499,  3.77191581,
+        3.7685344 ,  3.77129248,  3.77428902,  3.77529921,  3.78802274,
+        3.79433664,  3.80568807,  3.82146285,  3.8505667 ,  3.84643676,
+        3.87612961,  3.91444643,  3.96543979]
+    uncer = [ 0.01754326,  0.01164089,  0.00903466,  0.00797875,  0.00716722,
+        0.00713235,  0.00744013,  0.00770071,  0.00797466,  0.00956988,
+        0.01142398,  0.00890576,  0.00949308,  0.01012225,  0.01201   ,
+        0.01743369,  0.01614607,  0.01649115]
+    topo = -3.068602323532039
+    sedthk = 0.22750000655653985
+    p = Point('setting-Hongda.yml',{'topo':topo,'sedthk':sedthk}, T,vel,uncer)

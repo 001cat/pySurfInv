@@ -18,7 +18,6 @@ def plotLayer(h,v,fig=None,label=None):
     hNew = np.insert(np.repeat(np.cumsum(h),2)[:-1],0,0)
     vNew = np.repeat(v,2)
     plt.plot(vNew,hNew,label=label)
-    plt.gca().invert_yaxis()
     return fig
 def monoIncrease(a,eps=np.finfo(float).eps):
     return np.all(np.diff(a)>=0)
@@ -26,7 +25,21 @@ def randString(N):
     import random,string
     ''' Return a random string '''
     return ''.join([random.choice(string.ascii_letters + string.digits) for i in range(N)])
-
+def calMantleQ(deps,vpvs,period=1,age=4.0):
+    """ get Q value for mantle layer, follw Eq(4) from Ye (2013)
+        Calculate Q value for 20 sec period, Q doesn't change a lot with period
+    """
+    from scipy.special import erf
+    Tm = 1315. # deep mantle temperature in celsius
+    A = 30. # A value in Ye 2013 eq(4) 
+    temps = Tm*erf(500*deps/np.sqrt(age*365*24*3600))+273.15 # depth dependent mantle temperature in Kelvin
+    qs = A * (2*np.pi*1/period)**0.1 * np.exp(0.1*(2.5e5+3.2*9.8*deps*10)/(8.314472*temps))
+    qp = 1./(4./3.*vpvs**(-2) / qs + (1-4./3.*vpvs**(-2))/57823.)
+    return qs,qp
+def calCrustQ(vpvs):
+    qs = 350
+    qp = 1./(4./3.*(vpvs)**(-2) / qs + (1-4./3.*(vpvs)**(-2))/57823.)
+    return qs,qp
 
 class ezDict(object):
     def __init__(self,d) -> None:
@@ -272,6 +285,8 @@ class surfLayer(object):
     def _hProfile(self):
         return np.array([self.H/self.nFine]*self.nFine)
     def _vsProfile(self):
+        vsGrid = self._vsProfileGrid()
+        return (vsGrid[:-1]+vsGrid[1:])/2
         if self.mtype == 'water':
             return np.array([0]*self.nFine)
         elif self.mtype == 'constant':
@@ -285,33 +300,63 @@ class surfLayer(object):
             deg = 3 + (nBasis>=4)
             tmp = self.bspl(z,nBasis,deg) * self.vs
             return np.array((tmp[:-1]+tmp[1:])/2)
+    # def _vsProfile(self):       # interp using n instead of n+1, which should be worse
+    #     if self.mtype == 'water':
+    #         return np.array([0]*self.nFine)
+    #     elif self.mtype == 'constant':
+    #         return np.array([self.vs]*self.nFine)
+    #     elif self.mtype == 'linear':
+    #         tmp = np.linspace(self.vs[0],self.vs[1],self.nFine)
+    #         return tmp
+    #     elif self.mtype == 'Bspline':
+    #         z = np.linspace(0, self.H, self.nFine)
+    #         nBasis = len(self.vs)
+    #         deg = 3 + (nBasis>=4)
+    #         tmp = self.bspl(z,nBasis,deg) * self.vs
+    #         return tmp
     def genProfile(self):
         vs = self._vsProfile()
         h  = self._hProfile()
         if self.type == 'water':
             vp  = [self.vp]     *self.nFine
-            rho = [1.02]        *self.nFine
+            rho = [1.027]       *self.nFine
             qs  = [10000.]      *self.nFine
             qp  = [57822.]      *self.nFine
         elif self.type == 'sediment':
             vpvs = 2.0 if not hasattr(self,'vpvs') else self.vpvs
-            vp   = vs*vpvs
+            # vp   = vs*vpvs
+            vp   = vs*1.23 + 1.28   # marine sediments and rocks, Hamilton 1979
             rho  = 0.541 + 0.3601*vp
             qs  = [80.]   *self.nFine
             qp  = [160.]  *self.nFine
         elif self.type == 'crust':
-            vpvs = 1.75 if not hasattr(self,'vpvs') else self.vpvs
+            vpvs = 1.8 if not hasattr(self,'vpvs') else self.vpvs
             vp   = vs*vpvs
             rho  = 0.541 + 0.3601*vp
             qs  = [600.]   *self.nFine
             qp  = [1400.]  *self.nFine
         elif self.type == 'mantle':
-            vpvs = 1.75 if not hasattr(self,'vpvs') else self.vpvs
+            vpvs = 1.76 if not hasattr(self,'vpvs') else self.vpvs
             vp = vs*vpvs
             rho = 3.4268+(vs-4.5)/4.5
+            # rho  = 0.541 + 0.3601*vp    ## from Hongda
             qs  = [150.]   *self.nFine
             qp  = [1400.]  *self.nFine
+        # rho = np.array(rho)
+        # rho[np.array(vp) > 7.5]       = 3.35
         return np.array([h,vs,vp,rho,qs,qp])
+    def _vsProfileGrid(self):
+        if self.mtype == 'water':
+            return np.array([0]*(self.nFine+1))
+        elif self.mtype == 'constant':
+            return np.array([self.vs]*(self.nFine+1))
+        elif self.mtype == 'linear':
+            return np.linspace(self.vs[0],self.vs[1],self.nFine+1)
+        elif self.mtype == 'Bspline':
+            z = np.linspace(0, self.H, self.nFine+1)
+            nBasis = len(self.vs)
+            deg = 3 + (nBasis>=4)
+            return self.bspl(z,nBasis,deg) * self.vs
     def _perturb(self):
         for paraKey in self.paraDict.keys():
             if type(self.paraDict[paraKey]) is not list:
@@ -365,8 +410,10 @@ def _calForward(inProfile,wavetype='Ray',periods=[5,10,20,40,60,80]):
     # grDisp = SurfDisp(period,ur0[:nper],wtype=wavetype,ctype='Group')
     # return (phDisp,grDisp) 
 class model1D(object):
-    def __init__(self,layerList=[]) -> None:
+    def __init__(self,layerList=[],info={}) -> None:
         self.layers = layerList
+        from copy import deepcopy
+        self.info = deepcopy(info)
     @property
     def totalH(self):
         return np.sum([layer.H for layer in self.layers])
@@ -402,7 +449,7 @@ class model1D(object):
     def perturb(self):
         i = 0
         while i < 100:
-            newMod = model1D([layer.perturb() for layer in self.layers])
+            newMod = model1D([layer.perturb() for layer in self.layers],self.info)
             newMod.setFinalH(self.totalH)
             i += 1
             if newMod.isgood():
@@ -412,14 +459,33 @@ class model1D(object):
     def reset(self,resetype='origin'):
         i = 0
         while i < 1000:
-            newMod = model1D([layer.reset(resetype) for layer in self.layers])
+            newMod = model1D([layer.reset(resetype) for layer in self.layers],self.info)
             newMod.setFinalH(self.totalH)
             i += 1
             if newMod.isgood():
                 return newMod
         print(f'Error: no good reset:{resetype} found!!')
     def genProfile(self): # h,vs,vp,rho,qs,qp
-        return np.concatenate([layer.genProfile() for layer in self.layers],axis=1)
+        if 'lithoAge' in self.info.keys(): # assume mantle is the last layer
+            typeLst = []
+            for layer in self.layers:
+                typeLst += [layer.type]*layer.nFine
+            typeLst = np.array(typeLst)
+            tmp = np.concatenate([layer.genProfile() for layer in self.layers],axis=1)
+            h = tmp[0];deps = h.cumsum()
+            vpvsC = 1.8  if not hasattr(self.layers[-2],'vpvs') else self.layers[-2].vpvs
+            vpvsM = 1.76 if not hasattr(self.layers[-1],'vpvs') else self.layers[-1].vpvs
+            qsCrust = 350
+            qpCrust = 1./(4./3.*(vpvsC)**(-2) / qsCrust + (1-4./3.*(vpvsC)**(-2))/57823.)
+            qsCrust,qpCrust   = calCrustQ(vpvsC)
+            qsMantle,qpMantle = calMantleQ(deps[typeLst=='mantle'],vpvsM,age=self.info['lithoAge'])
+            tmp[4,typeLst=='crust'] = qsCrust
+            tmp[5,typeLst=='crust'] = qpCrust
+            tmp[4,typeLst=='mantle'] = qsMantle[:]
+            tmp[5,typeLst=='mantle'] = qpMantle[:]
+            return tmp
+        else:
+            return np.concatenate([layer.genProfile() for layer in self.layers],axis=1)
     def plotProfile(self,type='vs',**kwargs):
         h,vs,vp,rho,qs,qp = self.genProfile()
         if type == 'vs':
@@ -532,7 +598,7 @@ class Point(object):
     def __init__(self,settingYML=None,infoDict=None,periods=[],vels=[],uncers=[]) -> None:
         self.setting = settingDict(); self.setting.load(settingYML)
         self.setting.updateInfo(infoDict)
-        self.initMod = model1D()
+        self.initMod = model1D(info=infoDict)
         self.initMod.loadSetting(self.setting)
         self.obs = {}
         self.obs['RayPhase'] = {'T':periods,'c':vels,'uncer':uncers}
@@ -675,9 +741,11 @@ class PostPoint(Point):
         dset = invhdf5(dsetFile,'r')
         topo = dset[id].attrs['topo']
         sedthk = dset[id].attrs['sedi_thk']
+        lithoAge = dset[id].attrs['litho_age']
+        infoDict = {'topo':topo,'sedthk':sedthk,'lithoAge':lithoAge}
         setting = settingDict(setting_Hongda_pyMCinv)
-        setting.updateInfo({'topo':topo,'sedthk':sedthk})
-        self.initMod = model1D()
+        setting.updateInfo(infoDict)
+        self.initMod = model1D(info=infoDict)
         self.initMod.loadSetting(setting_Hongda_pyMCinv)
 
         T,pvelp,pvelo,uncer = np.loadtxt(f'{invDir}/{id}_0.ph.disp').T
@@ -731,8 +799,10 @@ class PostPoint(Point):
         plt.plot(T,self.initMod.forward(T),label='Initial')
         plt.legend()
         plt.title('Dispersion')
-    def plotDistrib(self):
-        for ind in range(len(self.initMod._paras())):
+    def plotDistrib(self,inds='all'):
+        if inds == 'all':
+            inds = range(len(self.initMod._paras()))
+        for ind in inds:
             plt.figure()
             y = self.Priparas[:,ind]
             _,bin_edges = np.histogram(y,bins=30)

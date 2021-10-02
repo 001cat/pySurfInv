@@ -3,11 +3,14 @@ from os import times
 import os,time
 import multiprocessing as mp
 import random,yaml,copy,time
+from scipy import interpolate
 from numpy.random.mtrand import f
 import scipy.signal
 import numpy as np
 from Triforce.pltHead import *
-import sys; sys.path.append('../')
+from Triforce.obspyPlus import randString
+import sys
+from Triforce.utils import savetxt; sys.path.append('../')
 import pySurfInv.fast_surf as fast_surf
 
 def plotLayer(h,v,fig=None,label=None):
@@ -18,6 +21,8 @@ def plotLayer(h,v,fig=None,label=None):
     hNew = np.insert(np.repeat(np.cumsum(h),2)[:-1],0,0)
     vNew = np.repeat(v,2)
     plt.plot(vNew,hNew,label=label)
+    if not fig.axes[0].yaxis_inverted():
+        fig.axes[0].invert_yaxis()
     return fig
 def monoIncrease(a,eps=np.finfo(float).eps):
     return np.all(np.diff(a)>=0)
@@ -287,19 +292,6 @@ class surfLayer(object):
     def _vsProfile(self):
         vsGrid = self._vsProfileGrid()
         return (vsGrid[:-1]+vsGrid[1:])/2
-        if self.mtype == 'water':
-            return np.array([0]*self.nFine)
-        elif self.mtype == 'constant':
-            return np.array([self.vs]*self.nFine)
-        elif self.mtype == 'linear':
-            tmp = np.linspace(self.vs[0],self.vs[1],self.nFine+1)
-            return np.array((tmp[:-1]+tmp[1:])/2)
-        elif self.mtype == 'Bspline':
-            z = np.linspace(0, self.H, self.nFine+1)
-            nBasis = len(self.vs)
-            deg = 3 + (nBasis>=4)
-            tmp = self.bspl(z,nBasis,deg) * self.vs
-            return np.array((tmp[:-1]+tmp[1:])/2)
     # def _vsProfile(self):       # interp using n instead of n+1, which should be worse
     #     if self.mtype == 'water':
     #         return np.array([0]*self.nFine)
@@ -345,6 +337,11 @@ class surfLayer(object):
         # rho = np.array(rho)
         # rho[np.array(vp) > 7.5]       = 3.35
         return np.array([h,vs,vp,rho,qs,qp])
+    def genProfileGrid(self):
+        vs = self._vsProfileGrid()
+        zdepth = np.insert(self._hProfile().cumsum(),0,0)
+        ltype = [self.type]*(self.nFine+1)
+        return [zdepth,vs,ltype]
     def _vsProfileGrid(self):
         if self.mtype == 'water':
             return np.array([0]*(self.nFine+1))
@@ -486,6 +483,18 @@ class model1D(object):
             return tmp
         else:
             return np.concatenate([layer.genProfile() for layer in self.layers],axis=1)
+    def genProfileGrid(self): # h,vs only
+        zdepth,vs,ltype = [],[],[]
+        try:
+            z0 = -max(self.info['topo'],0)
+        except:
+            z0 = 0
+        zOffset = z0
+        for layer in self.layers:
+            a,b,c = layer.genProfileGrid()
+            zdepth.extend(a+zOffset);vs.extend(b);ltype.extend(c)
+            zOffset = zdepth[-1]
+        return zdepth,vs,ltype
     def plotProfile(self,type='vs',**kwargs):
         h,vs,vp,rho,qs,qp = self.genProfile()
         if type == 'vs':
@@ -587,9 +596,7 @@ class model1D(object):
         for layer in self.layers:
             print(layer.type)
             print(layer.paraDict)
-            
-
-
+ 
 def accept(L0,L1):
     if L0 == 0:
         return True
@@ -833,6 +840,143 @@ class PostPoint(Point):
         # plt.plot(np.arange(self.N)[I],self.misfits[I])
 
 
+class ProfileGrid():
+    def __init__(self,profileIn) -> None:
+        zdepth,vs,ltype = profileIn
+        self.zdepth = np.array(profileIn[0])
+        self.vs     = np.array(profileIn[1])
+        self.ltype  = np.array(profileIn[2])
+    def value(self,z):
+        return np.interp(z,self.zdepth,self.vs,left=np.nan,right=np.nan)
+
+
+def mapSmooth(lons,lats,z,tension=0.0, width=50.):
+    tmpFname = f'tmp{randString(10)}'
+    XX,YY = np.meshgrid(lons,lats)
+    dlon,dlat = lons[1]-lons[0],lats[1]-lats[0]
+    savetxt(f'{tmpFname}.xyz',XX.flatten(),YY.flatten(),z.flatten())
+    with open(f'{tmpFname}.bash','w+') as f:
+        REG     = f'-R{lons[0]:.2f}/{lons[-1]:.2f}/{lats[0]:.2f}/{lats[-1]:.2f}'
+        f.writelines(f'gmt gmtset MAP_FRAME_TYPE fancy \n')
+        f.writelines(f'gmt surface {tmpFname}.xyz -T{tension} -G{tmpFname}.grd -I{dlon:.2f}/{dlat:.2f} {REG} \n')
+        f.writelines(f'gmt grdfilter {tmpFname}.grd -D4 -Fg{width} -G{tmpFname}_Smooth.grd {REG} \n')
+    os.system(f'bash {tmpFname}.bash')
+    from netCDF4 import Dataset
+    with Dataset(f'{tmpFname}_Smooth.grd') as dset:
+        zSmooth = dset['z'][()]
+    os.system(f'rm {tmpFname}*')
+    return zSmooth
+class model3D(object):
+    def __init__(self,lons=[],lats=[]) -> None:
+        self.lons = np.array(lons)
+        self.lats = np.array(lats)
+        self.mods       = [ [None]*len(lons) for _ in range(len(lats))]
+        self.profiles   = [ [None]*len(lons) for _ in range(len(lats))]
+        self.misfits    = [ [None]*len(lons) for _ in range(len(lats))]
+        self.disps      = [ [None]*len(lons) for _ in range(len(lats))]
+    @property
+    def dlon(self):
+        return self.lons[1] - self.lons[0]
+    @property
+    def dlat(self):
+        return self.lats[1] - self.lats[0]
+    @property
+    def XX(self):
+        return np.meshgrid(self.lons,self.lats)[0]
+    @property
+    def YY(self):
+        return np.meshgrid(self.lons,self.lats)[1]
+    def _findInd(self,lon,lat):
+        j = np.where(abs(self.lons-lon)<=self.dlon/4)[0][0]
+        i = np.where(abs(self.lats-lat)<=self.dlat/4)[0][0]
+        return i,j
+    @property
+    def mask(self):
+        m,n = len(self.lats),len(self.lons)
+        mask = np.ones((m,n),dtype=bool)
+        for i in range(m):
+            for j in range(n):
+                mask[i,j] = (self.profiles[i][j] is None)
+        return mask
+    def write(self,fname):
+        np.savez_compressed(fname,lons=self.lons,lats=self.lats,profiles=self.profiles,
+                            misfits=self.misfits,disps=self.disps,mods=self.mods)
+    def load(self,fname):
+        tmp = np.load(fname,allow_pickle=True)
+        self.lons = tmp['lons'][()]
+        self.lats = tmp['lats'][()]
+        self.profiles   = tmp['profiles'][()]
+        self.misfits    = tmp['misfits'][()]
+        self.disps      = tmp['disps'][()]
+        self.mods       = tmp['mods'][()]
+    def addInvPoint(self,lon,lat,postpoint:PostPoint):
+        print(f'Add point {lon:.1f}_{lat:.1f}')
+        i,j = self._findInd(lon,lat)
+        self.mods[i][j]     = postpoint.avgMod.copy()
+        self.profiles[i][j] = ProfileGrid(postpoint.avgMod.genProfileGrid())
+        self.misfits[i][j]  = postpoint.avgMod.misfit
+        self.disps[i][j]    = {'T':postpoint.obs['RayPhase']['T'],
+                               'pvelo':postpoint.obs['RayPhase']['c'],
+                               'pvelp':postpoint.avgMod.forward(postpoint.obs['RayPhase']['T']),
+                               'uncer':postpoint.obs['RayPhase']['uncer']}
+    def smooth(self,width=50):
+        m,n = len(self.lats),len(self.lons)
+        paras = [ [None]*n for _ in range(m)]
+        mask = self.mask
+        Nparas = len(self.mods[np.where(~mask)[0][0]][np.where(~mask)[1][0]].paras())
+        for i in range(m):
+            for j in range(n):
+                if not mask[i,j]:
+                    paras[i][j] = self.mods[i][j].paras()
+                else:
+                    paras[i][j] = [np.nan]*Nparas
+        paras = np.array(paras)
+        for i in range(paras.shape[-1]):
+            paras[:,:,i] = mapSmooth(self.lons,self.lats,paras[:,:,i],width=width)
+        for i in range(m):
+            for j in range(n):
+                if not mask[i,j]:
+                    self.mods[i][j].loadFromMC(paras[i][j])
+                    self.profiles[i][j] = ProfileGrid(self.mods[i][j].genProfileGrid())
+
+        
+    def mapview(self,depth):
+        mask = self.mask
+        vsMap = np.ma.masked_array(np.zeros(mask.shape),mask=mask)
+        m,n = len(self.lats),len(self.lons)
+        for i in range(m):
+            for j in range(n):
+                if not mask[i,j]:
+                    vsMap[i,j] = self.profiles[i][j].value(depth)
+        return vsMap
+    def section(self,lon1,lat1,lon2,lat2):
+        i1,j1 = self._findInd(lon1,lat1)
+        i2,j2 = self._findInd(lon2,lat2)
+        if i1==i2:
+            x = self.lons[j1:j2+1]
+            profiles = [self.profiles[i1][j] for j in range(j1,j2+1)]
+        elif j1==j2:
+            x = self.lats[i1:i2+1]
+            profiles = [self.profiles[i][j1] for i in range(i1,i2+1)]
+        else:
+            raise ValueError()
+        y = np.linspace(0,199.99,201)
+        z = np.zeros((len(y),len(x)))
+        for i in range(len(x)):
+            if profiles[i] is None:
+                z[:,i] = np.nan
+            else:
+                z[:,i] = profiles[i].value(y)
+        ind = ~np.isnan(z[0,:])
+        x,z = x[ind],z[:,ind]
+        XX,YY = np.meshgrid(x,y)
+        return XX,YY,z
+    def copy(self):
+        from copy import deepcopy
+        return deepcopy(self)
+
+
+
 if __name__ == '__main__':
     pass
     # a = randomWalkFloat(3.4,3,4,0.2)
@@ -856,12 +1000,16 @@ if __name__ == '__main__':
     # mod1 = model1D()
     # mod1.loadSetting('setting-Hongda.yml')
     # h,vs,vp,rho,qs,qp = mod1.genProfile()
-    # mod1.plotProfile()
-    # mod2 = mod1.perturb(); mod2.plotProfile()
-    # mod3 = mod2.reset('uniform'); mod3.plotProfile()
+    # mod1.show()
+    # mod2 = mod1.perturb(); mod2.show()
+    # mod3 = mod2.reset('uniform'); mod3.show()
     # plt.figure();plt.plot(np.linspace(5,80,100),mod1.forward(np.linspace(5,80,100)))
     # print(mod1.paras())
     # print(mod1.isgood())
+    # zdepth,vs,ltype =  mod1.genProfileGrid()
+    # fig = plt.figure(figsize=[5,7]);plt.plot(vs,zdepth)
+    # if not plt.gca().yaxis_inverted():
+    #     plt.gca().invert_yaxis()
 
     # with open('setting-Hongda.yml', 'r') as f:
     #     setting = ezDict(yaml.load(f,Loader=yaml.FullLoader))
@@ -898,17 +1046,69 @@ if __name__ == '__main__':
     # # pHD.plotVsProfile()
     # pHD.initMod.show()
 
-    id     = '233.0_43.2'
-    T = [ 10.,  12.,  14.,  16.,  18.,  20.,  22.,  24.,  26.,  28.,  30.,
-        32.,  36.,  40.,  50.,  60.,  70.,  80.]
-    vel = [ 3.66170009,  3.72857888,  3.75951126,  3.76266499,  3.77191581,
-        3.7685344 ,  3.77129248,  3.77428902,  3.77529921,  3.78802274,
-        3.79433664,  3.80568807,  3.82146285,  3.8505667 ,  3.84643676,
-        3.87612961,  3.91444643,  3.96543979]
-    uncer = [ 0.01754326,  0.01164089,  0.00903466,  0.00797875,  0.00716722,
-        0.00713235,  0.00744013,  0.00770071,  0.00797466,  0.00956988,
-        0.01142398,  0.00890576,  0.00949308,  0.01012225,  0.01201   ,
-        0.01743369,  0.01614607,  0.01649115]
-    topo = -3.068602323532039
-    sedthk = 0.22750000655653985
-    p = Point('setting-Hongda.yml',{'topo':topo,'sedthk':sedthk}, T,vel,uncer)
+    # id     = '233.0_43.2'
+    # T = [ 10.,  12.,  14.,  16.,  18.,  20.,  22.,  24.,  26.,  28.,  30.,
+    #     32.,  36.,  40.,  50.,  60.,  70.,  80.]
+    # vel = [ 3.66170009,  3.72857888,  3.75951126,  3.76266499,  3.77191581,
+    #     3.7685344 ,  3.77129248,  3.77428902,  3.77529921,  3.78802274,
+    #     3.79433664,  3.80568807,  3.82146285,  3.8505667 ,  3.84643676,
+    #     3.87612961,  3.91444643,  3.96543979]
+    # uncer = [ 0.01754326,  0.01164089,  0.00903466,  0.00797875,  0.00716722,
+    #     0.00713235,  0.00744013,  0.00770071,  0.00797466,  0.00956988,
+    #     0.01142398,  0.00890576,  0.00949308,  0.01012225,  0.01201   ,
+    #     0.01743369,  0.01614607,  0.01649115]
+    # topo = -3.068602323532039
+    # sedthk = 0.22750000655653985
+    # p = Point('setting-Hongda.yml',{'topo':topo,'sedthk':sedthk}, T,vel,uncer)
+
+
+
+
+    npzfile = '/work2/ayu/Cascadia/TomoResults/ani_tomo.npz'
+    tmp = np.load(npzfile,allow_pickle=True)
+    grd,eik = tmp['grd'][()],tmp['eikStack'][()]
+    invModel = model3D(grd.lons,grd.lats)
+    for ptlat in grd.lats:
+        for ptlon in grd.lons:
+            try:
+                p = PostPoint(f'/home/ayu/Projects/Cascadia/Tasks/runInv/ayuMC/{ptlon:.1f}_{ptlat:.1f}.npz')
+            except FileNotFoundError:
+                continue
+            invModel.addInvPoint(ptlon,ptlat,p)
+    invModel.write('invModelAyu.npz')
+
+
+    invModel = model3D()
+    invModel.load('invModelAyu.npz')
+    import pycpt;cmap = pycpt.load.gmtColormap('cv_original.cpt')
+    from scipy import interpolate
+
+    # XX,YY,Z = invModel.section(-131+360,46,-126+360,46)
+    # plt.figure()
+    # plt.pcolor(XX,YY,Z,cmap=cmap,vmin=4.1,vmax=4.4)
+    # plt.gca().invert_yaxis()
+    # f = interpolate.interp2d(XX[0,:],YY[:,0],Z,kind='cubic')
+    # newX = np.linspace(XX[0,0],XX[0,-1],300)
+    # newY = np.linspace(YY[0,0],YY[-1,0],300)
+    # newZ = f(newX,newY)
+    # XX,YY = np.meshgrid(newX,newY)
+    # plt.figure()
+    # plt.ylim(20,200)
+    # plt.pcolormesh(XX,YY,newZ,shading='gouraud',cmap=cmap,vmin=4.1,vmax=4.4)
+    # plt.gca().invert_yaxis()
+
+    invModel.smooth(width=80)
+    XX,YY,Z = invModel.section(-131+360,46,-126+360,46)
+    plt.figure()
+    plt.pcolor(XX,YY,Z,cmap=cmap,vmin=4.1,vmax=4.4)
+    plt.gca().invert_yaxis()
+    f = interpolate.interp2d(XX[0,:],YY[:,0],Z,kind='cubic')
+    newX = np.linspace(XX[0,0],XX[0,-1],300)
+    newY = np.linspace(YY[0,0],YY[-1,0],300)
+    newZ = f(newX,newY)
+    XX,YY = np.meshgrid(newX,newY)
+    plt.figure()
+    plt.ylim(20,200)
+    plt.pcolormesh(XX,YY,newZ,shading='gouraud',cmap=cmap,vmin=4.1,vmax=4.4)
+    plt.gca().invert_yaxis()
+

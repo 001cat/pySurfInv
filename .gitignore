@@ -117,6 +117,7 @@ dmypy.json
 # Added manually
 MCtest
 MCtest_priori
+example-Cascadia
 
 # macOS
 *.DS_Store

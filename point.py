@@ -1,16 +1,12 @@
-from multiprocessing import Value
-from os import times
-import os,time
-import multiprocessing as mp
-import random,yaml,copy,time
-from scipy import interpolate
-from numpy.random.mtrand import f
-import scipy.signal
+import os,time,glob,random,yaml,scipy.signal
 import numpy as np
+import multiprocessing as mp
+from copy import deepcopy
+from scipy import interpolate
 from Triforce.pltHead import *
+from Triforce.utils import savetxt
 from Triforce.obspyPlus import randString
-import sys
-from Triforce.utils import savetxt; sys.path.append('../')
+import sys; sys.path.append('../')
 import pySurfInv.fast_surf as fast_surf
 
 def plotLayer(h,v,fig=None,label=None):
@@ -21,6 +17,15 @@ def plotLayer(h,v,fig=None,label=None):
     hNew = np.insert(np.repeat(np.cumsum(h),2)[:-1],0,0)
     vNew = np.repeat(v,2)
     plt.plot(vNew,hNew,label=label)
+    if not fig.axes[0].yaxis_inverted():
+        fig.axes[0].invert_yaxis()
+    return fig
+def plotGrid(zdepth,v,fig=None,label=None):
+    if fig is None:
+        fig = plt.figure(figsize=[5,7])
+    else:
+        plt.figure(fig.number)
+    plt.plot(v,zdepth,label=label)
     if not fig.axes[0].yaxis_inverted():
         fig.axes[0].invert_yaxis()
     return fig
@@ -46,82 +51,8 @@ def calCrustQ(vpvs):
     qp = 1./(4./3.*(vpvs)**(-2) / qs + (1-4./3.*(vpvs)**(-2))/57823.)
     return qs,qp
 
-class ezDict(object):
-    def __init__(self,d) -> None:
-        self.dict = dict(d)
-    def keys(self):
-        return self.dict.keys()
-    def values(self):
-        return self.dict.values()
-    def updataValue(self,path,v):
-        a = self.dict
-        for k in path[:-1]:
-            a = a[k]
-        a[path[-1]] = v
-    def insert(self,ind,key,value):
-        newDict = {}
-        oldKeys = list(self.keys())
-        oldVals = list(self.values())
-        for i in len(self.keys()):
-            if i == ind:
-                newDict[key] = value
-            newDict[oldKeys[i]] = oldVals[i]
-        self.dict = newDict
-    def delete(self,key):
-        newDict = {}
-        oldKeys = list(self.keys())
-        oldVals = list(self.values())
-        for oldKey,oldVal in zip(oldKeys,oldVals):
-            if oldKey != key:
-                newDict[oldKey] = oldVal
-        self.dict = newDict
-class settingDict(dict):
-    def load(self,setting):
-        self.clear()
-        if type(setting) not in (dict,settingDict):
-            with open(setting, 'r') as f:
-                setting = yaml.load(f,Loader=yaml.FullLoader)
-        setting = copy.deepcopy(setting)
-        for k in setting:
-            self[k] = setting[k]
-    def updateVariable(self,newParas):
-        i = 0
-        for ltype in self.keys():
-            for k in self[ltype].keys():
-                if type(self[ltype][k]) is str:
-                    continue
-                if type(self[ltype][k][0]) is list:
-                    for j in range(len(self[ltype][k])):
-                        if self[ltype][k][j][1] in ('abs','rel'):
-                            self[ltype][k][j][0] = newParas[i];i+=1
-                else:
-                    if self[ltype][k][1] in ('abs','rel'): 
-                        self[ltype][k][0] = newParas[i];i+=1
-    def updateInfo(self,infoDict):
-        if infoDict is None:
-            return -1
-        ezdict = ezDict(self)
-        try:
-            waterDepth = max(-infoDict['topo'],0)
-            if waterDepth > 0:
-                if 'water' in self.keys():
-                    ezdict.updataValue(['water','h',0],-infoDict['topo'])
-                else:
-                    ezdict.insert(0,'water',{'type':'water','h':[-infoDict['topo'],'fixed'],
-                                'vp':[1.475,'fixed']})
-            else:
-                if 'water' in ezdict.keys():
-                    ezdict.delete('water')
-        except KeyError:
-            pass
-        try:
-            ezdict.updataValue(['sediment','h',0],infoDict['sedthk'])
-        except KeyError:
-            pass
-        self.load(ezdict.dict)
-    def copy(self):
-        return copy.deepcopy(self)
-class bsplBasis(object):
+class BsplBasis(object):
+    ''' calculating cubic b-spline basis functions '''
     def __init__(self,z,n,deg=None,alpha=2.,eps=np.finfo(float).eps) -> None:
         self.n,self.nBasis,self.deg,self.alpha,self.eps = len(z),n,deg,alpha,eps
         if deg is None:
@@ -152,58 +83,127 @@ class bsplBasis(object):
     def plot(self):
         plt.figure();plt.plot(np.linspace(0,1,self.n),self.basis.T)
 
-class SurfDisp():
-    '''Class to store surface dispersion curve
-
-        Attributes:
-            wtype:  wave type - Ray/Love
-            ctype:  velocity type - Phase or Group
-            vel:    velocity value
-            per:    periods
-        '''
-    def __init__(self,per=[],vel=[],uncer=None,wtype='Ray',ctype='Phase'):
-        self.wtype = wtype
-        self.ctype = ctype
-        self.per = np.array(per)
-        self.vel = np.array(vel)
-        if uncer is None:
-            self.uncer = np.zeros(len(per))
+def randVar2List(v):
+    if v.vmin is None:
+        return [float(v),'fixed']
+    else:
+        return [float(v),v.vmin,v.vmax,v.step]
+def list2RandVar(l):
+    if type(l[1]) == str:
+        try:
+            v,vtype,lim,step = l
+        except ValueError:
+            v,vtype = l
+        if vtype == 'rel':
+            vmin,vmax = v*(1-lim/100),v*(1+lim/100)
+        elif vtype == 'abs':
+            vmin,vmax = v-lim,v+lim
+            vmin = max(0,vmin)                                          # avoid negative parameters
+        elif vtype == 'fixed' or vtype == 'default' or vtype == 'total':
+            vmin,vmax,step = None,None,None
         else:
-            self.uncer = np.array(uncer)
+            raise ValueError()
+    else:
+        v,vmin,vmax,step = l
+    return RandVar(v,vmin,vmax,step)
+def dictR2L(dIn):
+    if type(dIn) is dict:
+        dOut = {}
+        for k,v in dIn.items():
+            dOut[k] = dictR2L(v)
+    elif type(dIn) in (list,np.ndarray):
+        dOut = []
+        for v in dIn:
+            dOut.append(dictR2L(v))
+    elif type(dIn) is RandVar:
+        dOut = randVar2List(dIn)
+    else:
+        dOut = deepcopy(dIn)
+    return dOut
+def dictL2R(dIn):
+    if type(dIn) is dict:
+        dOut = {}
+        for k,v in dIn.items():
+            dOut[k] = dictL2R(v)
+    elif type(dIn) in (list,np.ndarray) and type(dIn[0]) is list:
+        dOut = []
+        for v in dIn:
+            dOut.append(dictL2R(v))
+    elif type(dIn) in (list,np.ndarray) and type(dIn[0]) is not list:
+        dOut = list2RandVar(dIn)
+    else:
+        dOut = deepcopy(dIn)
+    return dOut
+class Setting(dict):
+    ''' Parameter setting to construct Model1D '''
+    def load(self,setting):
+        self.clear()
+        if type(setting) not in (Setting,dict):
+            with open(setting, 'r') as f:
+                setting = yaml.load(f,Loader=yaml.FullLoader)
+        for k,v in setting.items():
+            self[k] = deepcopy(v)
     @property
-    def N(self):
-        '''Number of periods'''
-        return len(self.per)
-    def setDisp(self,per=[],vel=[],uncer=None,wtype=None,ctype=None):
-        if wtype is None:
-            wtype = self.wtype
-        if ctype is None:
-            ctype = self.ctype
-        self.__init__(per=per,vel=vel,uncer=uncer,wtype=wtype,ctype=ctype)
-    def __repr__(self):
-        return '%s disp(%s): N of period = %d' % (self.wtype,self.ctype,self.N)
-    def __str__(self):
-        return '%s disp(%s): N of period = %d\nPeriod   = %s\nVelocity = %s' \
-            % (self.wtype,self.ctype,self.N,self.per,self.vel)
+    def info(self):
+        return self['Info']
+    def _updateWater(self,topo):
+        waterDepth = max(-topo,0)
+        if waterDepth <= 0:
+            self.pop('water')
+        else:
+            if 'water' in self.keys():
+                self['water']['h'][0] = waterDepth
+            else:
+                print('Warning: topo<0 found! Please add water layer in setting file!!')
+    def _updateSediment(self,sedthk):
+        self['sediment']['h'][0] = sedthk
+    def updateInfo(self,topo=None,sedthk=None,lithoAge=None):
+        if topo is not None:
+            self.info['topo'] = topo
+            self._updateWater(topo)
+        if sedthk is not None:
+            self.info['sedthk'] = sedthk
+            self._updateSediment(sedthk)
+        if lithoAge is not None:
+            self.info['lithoAge'] = lithoAge
+    def _updateVars(self,newParas):  #for test only
+        i = 0
+        for ltype in self.keys():
+            if ltype == 'Info':
+                continue
+            for k in self[ltype].keys():
+                if type(self[ltype][k]) is str:
+                    continue
+                if type(self[ltype][k][0]) is list:
+                    for j in range(len(self[ltype][k])):
+                        if self[ltype][k][j][1] in ('abs','rel'):
+                            self[ltype][k][j][0] = newParas[i];i+=1
+                else:
+                    if self[ltype][k][1] in ('abs','rel'): 
+                        self[ltype][k][0] = newParas[i];i+=1
+    def copy(self):
+        return deepcopy(self)
 
-class randomWalkFloat(float):
+class RandVar(float):
+    ''' Random variables, varies between vmin and vmax. It could be gaussian perturbed 
+    with sigma=step, uniformly reset or reset to the center of vmin and vmax'''
     def __new__(cls,v,vmin=None,vmax=None,step=None):
         return super().__new__(cls,v)
     def __init__(self,v,vmin=None,vmax=None,step=None) -> None:
         self.vmin,self.vmax,self.step = vmin,vmax,step
-    def reset(self,resetype='origin'):
+    def reset(self,resetype='center'):
         if self.vmin == None:
             vNew = float(self)
-        elif resetype == 'origin':
+        elif resetype == 'center':
             vNew = (self.vmin+self.vmax)/2
         elif resetype == 'uniform':
             vNew = random.uniform(self.vmin,self.vmax)
         else:
-            raise ValueError('Unknown reset type!')
-        return randomWalkFloat(vNew,self.vmin,self.vmax,self.step)
+            raise ValueError('Unknown reset type! Could only be uniform or center(default)')
+        return RandVar(vNew,self.vmin,self.vmax,self.step)
     def perturb(self):
         if self.vmin == None:
-            return randomWalkFloat(float(self),self.vmin,self.vmax,self.step)
+            return RandVar(float(self),self.vmin,self.vmax,self.step)
         for i in range(1000):
             vNew = random.gauss(self,self.step)
             if vNew < self.vmax and vNew > self.vmin:
@@ -212,45 +212,24 @@ class randomWalkFloat(float):
                 print(f'No valid perturb, uniform reset instead! '+
                       f'{self} {self.vmin} {self.vmax} {self.step}')
                 return self.reset('uniform')
-        return randomWalkFloat(vNew,self.vmin,self.vmax,self.step)
-    def updateValue(self,v):
-        return randomWalkFloat(v,vmin=self.vmin,vmax=self.vmax,step=self.step)
+        return RandVar(vNew,self.vmin,self.vmax,self.step)
+    def show(self):
+        print(f'v={self} vmax={self.vmax} vmin={self.vmin} step={self.step}')
 
-def genRWFList(inList):
-    outList = []
-    if type(inList[0]) is not list:
-         inList = [inList]
-    for i in range(len(inList)):
-        try:
-            v,vtype,lim,step = inList[i]
-        except ValueError:
-            v,vtype = inList[i]
-        if vtype == 'rel':
-            vmin,vmax = v*(1-lim/100),v*(1+lim/100)
-        elif vtype == 'abs':
-            vmin,vmax = v-lim,v+lim
-            vmin = max(0,vmin)
-        elif vtype == 'fixed' or vtype == 'default' or vtype == 'total':
-            vmin,vmax,step = None,None,0
-        else:
-            raise ValueError()
-        outList.append(randomWalkFloat(v,vmin,vmax,step))
-    if len(outList) == 1:
-        outList = outList[0]
-    return outList
-class surfLayer(object):
+class SurfLayer(object):
+    ''' Horizontal layers used to generate Model1D '''
     def __init__(self,layerType,settingDict) -> None:
         self.type,self.mtype = layerType,settingDict['type']
         self.paraDict = {}
-        self.paraDict['H'] = genRWFList(settingDict['h'])
+        self.paraDict['h'] = dictL2R(settingDict['h'])
         if self.mtype == 'water':
-            self.paraDict['vp'] = genRWFList(settingDict['vp'])
+            self.paraDict['vp'] = dictL2R(settingDict['vp'])
         else:
-            self.paraDict['vs'] = genRWFList(settingDict['vs'])
-            self.paraDict['vpvs'] = genRWFList(settingDict['vpvs'])
+            self.paraDict['vs'] = dictL2R(settingDict['vs'])
+            self.paraDict['vpvs'] = dictL2R(settingDict['vpvs'])
     @property
     def H(self):
-        return self.paraDict['H']
+        return self.paraDict['h']
     @property
     def vs(self):
         return self.paraDict['vs']
@@ -280,32 +259,70 @@ class surfLayer(object):
             else:
                 nFine = 5
         return nFine
+    @property
+    def nRandVar(self):
+        n = 0
+        for v in self.paraDict.values():
+            if type(v) is not list:
+                n += (v.vmin is not None)
+            else:
+                for vsub in v:
+                    n += (vsub.vmin is not None)
+        return n
     def bspl(self,z,nBasis,deg):
         if hasattr(self,'_bspl') and (nBasis == self._bspl.nBasis) and \
            (deg == self._bspl.deg) and (len(z) == self._bspl.n):
            pass
         else:
-            self._bspl = bsplBasis(z,nBasis,deg)
+            self._bspl = BsplBasis(z,nBasis,deg)
         return self._bspl
+    def updateVars(self,vars):
+        if self.nRandVar != len(vars):
+            raise ValueError('Variables to be loaded is incompatible with model!')
+        i = 0
+        for k in self.paraDict.keys():
+            if type(self.paraDict[k]) is not list:
+                if self.paraDict[k].vmin is not None:
+                    self.paraDict[k] = RandVar(vars[i],self.paraDict[k].vmin,
+                                            self.paraDict[k].vmax,self.paraDict[k].step)
+                    i += 1
+            else:
+                for j in range(len(self.paraDict[k])):
+                    if self.paraDict[k][j].vmin is not None:
+                        self.paraDict[k][j] = RandVar(vars[i],self.paraDict[k][j].vmin,
+                                                self.paraDict[k][j].vmax,self.paraDict[k][j].step)
+                        i += 1
+    def _vsProfileGrid(self):
+        if self.mtype == 'water':
+            return np.array([0]*(self.nFine+1))
+        elif self.mtype == 'constant':
+            return np.array([self.vs]*(self.nFine+1))
+        elif self.mtype == 'linear':
+            return np.linspace(self.vs[0],self.vs[1],self.nFine+1)
+        elif self.mtype == 'Bspline':
+            z = np.linspace(0, self.H, self.nFine+1)
+            nBasis = len(self.vs)
+            deg = 3 + (nBasis>=4)
+            return self.bspl(z,nBasis,deg) * self.vs
     def _hProfile(self):
         return np.array([self.H/self.nFine]*self.nFine)
     def _vsProfile(self):
         vsGrid = self._vsProfileGrid()
         return (vsGrid[:-1]+vsGrid[1:])/2
-    # def _vsProfile(self):       # interp using n instead of n+1, which should be worse
-    #     if self.mtype == 'water':
-    #         return np.array([0]*self.nFine)
-    #     elif self.mtype == 'constant':
-    #         return np.array([self.vs]*self.nFine)
-    #     elif self.mtype == 'linear':
-    #         tmp = np.linspace(self.vs[0],self.vs[1],self.nFine)
-    #         return tmp
-    #     elif self.mtype == 'Bspline':
-    #         z = np.linspace(0, self.H, self.nFine)
-    #         nBasis = len(self.vs)
-    #         deg = 3 + (nBasis>=4)
-    #         tmp = self.bspl(z,nBasis,deg) * self.vs
-    #         return tmp
+    def _vsProfile_Leon(self):       # interp using n instead of n+1, which should be worse
+        if self.mtype == 'water':
+            return np.array([0]*self.nFine)
+        elif self.mtype == 'constant':
+            return np.array([self.vs]*self.nFine)
+        elif self.mtype == 'linear':
+            tmp = np.linspace(self.vs[0],self.vs[1],self.nFine)
+            return tmp
+        elif self.mtype == 'Bspline':
+            z = np.linspace(0, self.H, self.nFine)
+            nBasis = len(self.vs)
+            deg = 3 + (nBasis>=4)
+            tmp = self.bspl(z,nBasis,deg) * self.vs
+            return tmp
     def genProfile(self):
         vs = self._vsProfile()
         h  = self._hProfile()
@@ -342,18 +359,6 @@ class surfLayer(object):
         zdepth = np.insert(self._hProfile().cumsum(),0,0)
         ltype = [self.type]*(self.nFine+1)
         return [zdepth,vs,ltype]
-    def _vsProfileGrid(self):
-        if self.mtype == 'water':
-            return np.array([0]*(self.nFine+1))
-        elif self.mtype == 'constant':
-            return np.array([self.vs]*(self.nFine+1))
-        elif self.mtype == 'linear':
-            return np.linspace(self.vs[0],self.vs[1],self.nFine+1)
-        elif self.mtype == 'Bspline':
-            z = np.linspace(0, self.H, self.nFine+1)
-            nBasis = len(self.vs)
-            deg = 3 + (nBasis>=4)
-            return self.bspl(z,nBasis,deg) * self.vs
     def _perturb(self):
         for paraKey in self.paraDict.keys():
             if type(self.paraDict[paraKey]) is not list:
@@ -364,24 +369,18 @@ class surfLayer(object):
         newLayer = self.copy()
         newLayer._perturb()
         return newLayer
-    def _reset(self,resetype='origin'):
+    def _reset(self,resetype='center'):
         for paraKey in self.paraDict.keys():
             if type(self.paraDict[paraKey]) is not list:
                 self.paraDict[paraKey] = self.paraDict[paraKey].reset(resetype=resetype)
             else:
                 self.paraDict[paraKey] = [v.reset(resetype=resetype) for v in self.paraDict[paraKey]]
-    def reset(self,resetype='origin'):
+    def reset(self,resetype='center'):
         newLayer = self.copy()
         newLayer._reset(resetype=resetype)
         return newLayer
-    def plotProfile(self,type='vs'):
-        h,vs,vp,rho,qs,qp = self.genProfile()
-        if type == 'vs':
-            plotLayer(h,vs);plt.title('Vs')
-        else:
-            print('To be added...')
     def copy(self):
-        return copy.deepcopy(self)
+        return deepcopy(self)
 
 def _calForward(inProfile,wavetype='Ray',periods=[5,10,20,40,60,80]):
     if wavetype == 'Ray':
@@ -406,64 +405,64 @@ def _calForward(inProfile,wavetype='Ray',periods=[5,10,20,40,60,80]):
     # phDisp = SurfDisp(period,cr0[:nper],wtype=wavetype,ctype='Phase')
     # grDisp = SurfDisp(period,ur0[:nper],wtype=wavetype,ctype='Group')
     # return (phDisp,grDisp) 
-class model1D(object):
+class Model1D(object):
+    ''' One demensional isotropic model '''
     def __init__(self,layerList=[],info={}) -> None:
         self.layers = layerList
-        from copy import deepcopy
-        self.info = deepcopy(info)
+        self.info   = info
     @property
     def totalH(self):
         return np.sum([layer.H for layer in self.layers])
-    def loadSetting(self,settingYML=None):
-        if settingYML is None:
-            return -1
-        setting = settingDict(); setting.load(settingYML)
+    def loadSetting(self,settingYML):
+        setting = Setting(); setting.load(settingYML)
+        self.info = setting['Info']; setting.pop('Info')
         if list(setting.values())[-1]['h'][1] == 'total':
             Hs = [setting[ltype]['h'][0] for ltype in setting.keys()]
             setting[list(setting.keys())[-1]]['h'] = [Hs[-1]-np.sum(Hs[:-1]),'total']
         else:
-            raise ValueError()
-        self.layers = [surfLayer(ltype,setting[ltype]) for ltype in setting.keys()]
-    def loadFromMC(self,MCpara):
-        H = self.totalH
+            raise ValueError('Thickness of last layer should be labeled as total!')
+        self.layers = [SurfLayer(ltype,setting[ltype]) for ltype in setting.keys()]
+    def toSetting(self):
+        setting = Setting()
+        for layer in self.layers:
+            setting[layer.type] = {'type':layer.mtype}
+            setting[layer.type].update(dictR2L(layer.paraDict))
+        setting[layer.type]['h'] = [self.totalH,'total']
+        setting['Info'] = self.info
+        return deepcopy(setting)
+    def setFinalH(self,totalH):
+        finalH = totalH - np.sum([l.paraDict['h'] for l in self.layers[:-1]])
+        self.layers[-1].paraDict['h'] = RandVar(finalH)
+    def updateVars(self,vars):
+        totalH = self.totalH
         i = 0
         for l in self.layers:
-            p = l.paraDict
-            for k in p.keys():
-                if type(p[k]) is not list:
-                    if p[k].vmin is not None:
-                        p[k] = randomWalkFloat(MCpara[i],p[k].vmin,p[k].vmax,p[k].step)
-                        i+=1
-                else:
-                    for j in range(len(p[k])):
-                        if p[k][j].vmin is not None:
-                            p[k][j] = randomWalkFloat(MCpara[i],p[k][j].vmin,p[k][j].vmax,p[k][j].step)
-                            i+=1
-        l.paraDict['H'] = randomWalkFloat(H-np.sum([layer.H for layer in self.layers[:-1]]))
-    def setFinalH(self,totalH):
-        finalH = totalH - np.sum([l.paraDict['H'] for l in self.layers[:-1]])
-        self.layers[-1].paraDict['H'] = randomWalkFloat(finalH)
+            l.updateVars(vars[i:i+l.nRandVar])
+            i += l.nRandVar
+        if i != len(vars):
+            raise ValueError('Variables to be loaded is incompatible with model!')
+        self.setFinalH(totalH)
     def perturb(self):
         i = 0
         while i < 100:
-            newMod = model1D([layer.perturb() for layer in self.layers],self.info)
+            newMod = Model1D([layer.perturb() for layer in self.layers],self.info)
             newMod.setFinalH(self.totalH)
             i += 1
             if newMod.isgood():
                 return newMod
         print('Warning: no good perturbation found, return uniform reset instead')
         return self.reset('uniform')
-    def reset(self,resetype='origin'):
+    def reset(self,resetype='center'):
         i = 0
         while i < 1000:
-            newMod = model1D([layer.reset(resetype) for layer in self.layers],self.info)
+            newMod = Model1D([layer.reset(resetype) for layer in self.layers],self.info)
             newMod.setFinalH(self.totalH)
             i += 1
             if newMod.isgood():
                 return newMod
         print(f'Error: no good reset:{resetype} found!!')
     def genProfile(self): # h,vs,vp,rho,qs,qp
-        if 'lithoAge' in self.info.keys(): # assume mantle is the last layer
+        if 'lithoAge' in self.info.keys() and self.info['lithoAge'] is not None: # assume mantle is the last layer
             typeLst = []
             for layer in self.layers:
                 typeLst += [layer.type]*layer.nFine
@@ -495,21 +494,12 @@ class model1D(object):
             zdepth.extend(a+zOffset);vs.extend(b);ltype.extend(c)
             zOffset = zdepth[-1]
         return zdepth,vs,ltype
-    def plotProfile(self,type='vs',**kwargs):
-        h,vs,vp,rho,qs,qp = self.genProfile()
-        if type == 'vs':
-            fig = plotLayer(h,vs,**kwargs);plt.title('Vs')
-        else:
-            print('To be added...')
-        return fig
     def forward(self,periods=[5,10,20,40,60,80]):
         pred = _calForward(self.genProfile(),wavetype='Ray',periods=periods)
         if pred is None:
             print(f'Warning: Forward not complete! Model listed below:')
             self.show()
         return pred
-    def copy(self):
-        return copy.deepcopy(self)
     def isgood(self):
         ltypes = []
         for layer in self.layers:
@@ -564,19 +554,23 @@ class model1D(object):
             if len(np.where(osci > osciLim)[0]) >= 1:   # origin >= 1
                 return False
         return True
+    def plotProfile(self,type='vs',**kwargs):
+        h,vs,vp,rho,qs,qp = self.genProfile()
+        if type == 'vs':
+            fig = plotLayer(h,vs,**kwargs);plt.title('Vs')
+        else:
+            print('To be added...')
+        return fig
+    def plotProfileGrid(self,type='vs',**kwargs):
+        zdepth,vs,ltype = self.genProfileGrid()
+        if type == 'vs':
+            fig = plotGrid(zdepth,vs,**kwargs);plt.title('Vs')
+        else:
+            print('To be added...')
+        return fig
     def _paras(self):
-        paras = []
-        for l in self.layers:
-            for k in l.paraDict.keys():
-                if type(l.paraDict[k]) == list:
-                    paras.extend(l.paraDict[k])
-                else:
-                    paras.append(l.paraDict[k])
-        paras = [v for v in paras if v.vmin is not None]
-        return paras
+        return self.paras(fullInfo=False)
     def paras(self,fullInfo=False):
-        if not fullInfo:
-            return self._paras()
         paras = []
         for l in self.layers:
             for k in l.paraDict.keys():
@@ -586,8 +580,13 @@ class model1D(object):
                 else:
                     v = l.paraDict[k]
                     paras.append([v,l.type,k])
-        paras = [a for a in paras if a[0].vmin is not None]
+        if not fullInfo:
+            paras = [a[0] for a in paras if a[0].vmin is not None]
+        else:
+            paras = [a for a in paras if a[0].vmin is not None]
         return paras
+    def copy(self):
+        return deepcopy(self)
     def write(self,index,target,addInfo):
         addInfo.extend(self._paras())
         target[index] = addInfo
@@ -596,34 +595,27 @@ class model1D(object):
         for layer in self.layers:
             print(layer.type)
             print(layer.paraDict)
- 
+
 def accept(L0,L1):
     if L0 == 0:
         return True
     return random.random() > (L0-L1)/L0
 class Point(object):
-    def __init__(self,settingYML=None,infoDict=None,periods=[],vels=[],uncers=[]) -> None:
-        self.setting = settingDict(); self.setting.load(settingYML)
-        self.setting.updateInfo(infoDict)
-        self.initMod = model1D(info=infoDict)
-        self.initMod.loadSetting(self.setting)
-        self.obs = {}
-        self.obs['RayPhase'] = {'T':periods,'c':vels,'uncer':uncers}
-    def updateSetting(self,newVars):
-        if type(newVars) == settingDict:
-            self.setting = newVars
-        else:
-            self.setting.updateVariable(newVars)
-        self.initMod.loadSetting(self.setting)
+    def __init__(self,settingYML=None,sedthk=None,topo=None,lithoAge=None,
+                      periods=[],vels=[],uncers=[]) -> None:
+        setting = Setting(); setting.load(settingYML)
+        setting.updateInfo(sedthk=sedthk,topo=topo,lithoAge=lithoAge)
+        self.initMod = Model1D(); self.initMod.loadSetting(setting)
+        self.obs = {'T':periods,'c':vels,'uncer':uncers}    # Rayleigh wave, phase velocity only
     def misfit(self,model=None):
         if model is None:
             model = self.initMod
-        T = self.obs['RayPhase']['T']
+        T = self.obs['T']
         cP = model.forward(periods=T)
         if cP is None:
             return 88888,0
-        cO = self.obs['RayPhase']['c']
-        uncer = self.obs['RayPhase']['uncer']
+        cO = self.obs['c']
+        uncer = self.obs['uncer']
         N = len(T)
         chiSqr = (((cO - cP)/uncer)**2).sum()
         misfit = np.sqrt(chiSqr/N)
@@ -652,8 +644,8 @@ class Point(object):
                 # mod1 = modSeed.perturb()
                 if debug:
                     plt.figure()
-                    T = self.obs['RayPhase']['T']
-                    plt.plot(T,self.obs['RayPhase']['c'],'--')
+                    T = self.obs['T']
+                    plt.plot(T,self.obs['c'],'--')
                     plt.plot(T,mod0.forward(periods=T))
                     plt.plot(T,mod1.forward(periods=T))
                 if priori:
@@ -670,7 +662,8 @@ class Point(object):
                     plt.close()
         mcTrack = np.array(mcTrack)
         os.makedirs(outdir,exist_ok=True)
-        np.savez_compressed(f'{outdir}/{id}.npz',mcTrack=mcTrack,initMod=self.initMod,obs=self.obs)
+        np.savez_compressed(f'{outdir}/{id}.npz',mcTrack=mcTrack,
+                            setting=dict(self.initMod.toSetting()),obs=self.obs)
         if verbose == 'mp':
             print(f'Step {id.split("_")[1]} Time cost:{time.time()-timeStamp:.2f} ')
     def MCinvMP(self,outdir='MCtest',id='test',runN=50000,step4uwalk=1000,nprocess=12,seed=None,priori=False):
@@ -687,12 +680,13 @@ class Point(object):
         subMCLst = []
         for argIn in argInLst:
             tmp = np.load(f'{tmpDir}/{argIn[1]}.npz',allow_pickle=True)
-            subMC,_,_ = tmp['mcTrack'],tmp['initMod'][()],tmp['obs'][()]
+            subMC,_,_ = tmp['mcTrack'],tmp['setting'][()],tmp['obs'][()]
             subMCLst.append(subMC)
         os.system(f'rm -r {tmpDir}')
         mcTrack = np.concatenate(subMCLst,axis=0)
         os.makedirs(outdir,exist_ok=True)
-        np.savez_compressed(f'{outdir}/{id}.npz',mcTrack=mcTrack,initMod=self.initMod,obs=self.obs)
+        np.savez_compressed(f'{outdir}/{id}.npz',mcTrack=mcTrack,
+                            setting=dict(self.initMod.toSetting()),obs=self.obs)
 
         print(f'Time cost:{time.time()-timeStamp:.2f} ')
         
@@ -700,7 +694,9 @@ class PostPoint(Point):
     def __init__(self,npzMC=None,npzPriori=None):
         if npzMC is not None:
             tmp = np.load(npzMC,allow_pickle=True)
-            self.MC,self.initMod,self.obs = tmp['mcTrack'],tmp['initMod'][()],tmp['obs'][()]
+            self.MC,setting,self.obs = tmp['mcTrack'],tmp['setting'][()],tmp['obs'][()]
+            self.initMod = Model1D(); self.initMod.loadSetting(setting)
+            
             self.N       = self.MC.shape[0]
             self.misfits = self.MC[:,0]
             self.Ls      = self.MC[:,1]
@@ -709,7 +705,7 @@ class PostPoint(Point):
 
             indMin = np.nanargmin(self.misfits)
             self.minMod         = self.initMod.copy()
-            self.minMod.loadFromMC(self.MCparas[indMin])
+            self.minMod.updateVars(self.MCparas[indMin])
             self.minMod.L       = self.Ls[indMin]
             self.minMod.misfit  = self.misfits[indMin]
 
@@ -717,7 +713,7 @@ class PostPoint(Point):
             self.accFinal = (self.misfits < self.thres)
 
             self.avgMod         = self.initMod.copy()
-            self.avgMod.loadFromMC(np.mean(self.MCparas[self.accFinal,:],axis=0))
+            self.avgMod.updateVars(np.mean(self.MCparas[self.accFinal,:],axis=0))
             self.avgMod.misfit,self.avgMod.L = self.misfit(model=self.avgMod)
     
         if npzPriori is not None:
@@ -743,21 +739,20 @@ class PostPoint(Point):
                                            [4.0, 'rel', 10, 0.02],
                                            [4.3, 'rel', 10, 0.02],
                                            [4.5, 'rel', 5, 0.02]],
-                                    'vpvs': [1.76, 'fixed']}}
+                                    'vpvs': [1.76, 'fixed']},
+                                  'Info':{'label':'Hongda-2021Summer'}}
 
         dset = invhdf5(dsetFile,'r')
         topo = dset[id].attrs['topo']
         sedthk = dset[id].attrs['sedi_thk']
         lithoAge = dset[id].attrs['litho_age']
-        infoDict = {'topo':topo,'sedthk':sedthk,'lithoAge':lithoAge}
-        setting = settingDict(setting_Hongda_pyMCinv)
-        setting.updateInfo(infoDict)
-        self.initMod = model1D(info=infoDict)
+        setting = Setting(setting_Hongda_pyMCinv)
+        setting.updateInfo(topo=topo,sedthk=sedthk,lithoAge=lithoAge)
+        self.initMod = Model1D()
         self.initMod.loadSetting(setting_Hongda_pyMCinv)
 
         T,pvelp,pvelo,uncer = np.loadtxt(f'{invDir}/{id}_0.ph.disp').T
-        self.obs = {}
-        self.obs['RayPhase'] = {'T':T,'c':pvelo,'uncer':uncer}
+        self.obs = {'T':T,'c':pvelo,'uncer':uncer}
 
         inarr = np.load(f'{invDir}/mc_inv.{id}.npz')
         invdata    = inarr['arr_0']
@@ -780,7 +775,7 @@ class PostPoint(Point):
 
         indMin = np.nanargmin(self.misfits)
         self.minMod         = self.initMod.copy()
-        self.minMod.loadFromMC(self.MCparas[indMin])
+        self.minMod.updateVars(self.MCparas[indMin])
         self.minMod.L       = self.Ls[indMin]
         self.minMod.misfit  = self.misfits[indMin]
 
@@ -788,7 +783,7 @@ class PostPoint(Point):
         self.accFinal = (self.misfits < self.thres)
 
         self.avgMod         = self.initMod.copy()
-        self.avgMod.loadFromMC(np.mean(self.MCparas[self.accFinal,:],axis=0))
+        self.avgMod.updateVars(np.mean(self.MCparas[self.accFinal,:],axis=0))
         self.avgMod.misfit,self.avgMod.L = self.misfit(model=self.avgMod)
 
         if priDir is not None:
@@ -797,8 +792,8 @@ class PostPoint(Point):
             paraval       = invdata[:,2:11]
             self.Priparas = paraval[:,colOrder]
     def plotDisp(self):
-        T,vel,uncer = self.obs['RayPhase']['T'],self.obs['RayPhase']['c'],\
-                      self.obs['RayPhase']['uncer']
+        T,vel,uncer = self.obs['T'],self.obs['c'],\
+                      self.obs['uncer']
         plt.figure()
         plt.errorbar(T,vel,uncer,ls='None',capsize=3,label='Observation')
         plt.plot(T,self.avgMod.forward(T),label='Avg accepted')
@@ -825,6 +820,14 @@ class PostPoint(Point):
         self.minMod.plotProfile(fig=fig,label='Min')
         plt.xlim(3.8,4.8)
         plt.legend()
+        return fig
+    def plotVsProfileGrid(self):
+        fig = self.initMod.plotProfileGrid(label='Initial')
+        self.avgMod.plotProfileGrid(fig=fig,label='Avg')
+        self.minMod.plotProfileGrid(fig=fig,label='Min')
+        plt.xlim(3.8,4.8)
+        plt.legend()
+        return fig
     def plotCheck(self):
         pass
         ''' plot likelihood '''
@@ -849,8 +852,9 @@ class ProfileGrid():
     def value(self,z):
         return np.interp(z,self.zdepth,self.vs,left=np.nan,right=np.nan)
 
-
 def mapSmooth(lons,lats,z,tension=0.0, width=50.):
+    lons = lons.round(decimals=4)
+    lats = lats.round(decimals=4)
     tmpFname = f'tmp{randString(10)}'
     XX,YY = np.meshgrid(lons,lats)
     dlon,dlat = lons[1]-lons[0],lats[1]-lats[0]
@@ -864,9 +868,10 @@ def mapSmooth(lons,lats,z,tension=0.0, width=50.):
     from netCDF4 import Dataset
     with Dataset(f'{tmpFname}_Smooth.grd') as dset:
         zSmooth = dset['z'][()]
-    os.system(f'rm {tmpFname}*')
+    os.system(f'rm {tmpFname}* gmt.conf gmt.history')
     return zSmooth
-class model3D(object):
+class Model3D(object):
+    ''' to avoid bugs in gmt smooth, start/end of lons/lats should be integer '''
     def __init__(self,lons=[],lats=[]) -> None:
         self.lons = np.array(lons)
         self.lats = np.array(lats)
@@ -898,27 +903,34 @@ class model3D(object):
             for j in range(n):
                 mask[i,j] = (self.profiles[i][j] is None)
         return mask
-    def write(self,fname):
-        np.savez_compressed(fname,lons=self.lons,lats=self.lats,profiles=self.profiles,
-                            misfits=self.misfits,disps=self.disps,mods=self.mods)
-    def load(self,fname):
-        tmp = np.load(fname,allow_pickle=True)
-        self.lons = tmp['lons'][()]
-        self.lats = tmp['lats'][()]
-        self.profiles   = tmp['profiles'][()]
-        self.misfits    = tmp['misfits'][()]
-        self.disps      = tmp['disps'][()]
-        self.mods       = tmp['mods'][()]
+    
+    def loadInvDir(self,invDir='example-Cascadia'):
+        ptlons,ptlats = [],[]
+        try: # check format and initialize
+            for npzfile in glob.glob(f'{invDir}/*.npz'):
+                ptlon,ptlat = npzfile.split('/')[-1][:-4].split('_')[:]
+                ptlons.append(ptlon); ptlats.append(ptlat)
+            ptlons=np.array([float(a) for a in set(ptlons)]); ptlons.sort(); dlon = min(np.diff(ptlons))
+            ptlats=np.array([float(a) for a in set(ptlats)]); ptlats.sort(); dlat = min(np.diff(ptlats))
+            lons = np.arange(np.floor(ptlons[0]),np.ceil(ptlons[-1])+dlon/2,dlon)
+            lats = np.arange(np.floor(ptlats[0]),np.ceil(ptlats[-1])+dlat/2,dlat)
+            self.__init__(lons,lats)
+        except:
+            raise TypeError('Could not take lat/lon, please make sure the format is invDir/lon_lat.npz')
+        for npzfile in glob.glob(f'{invDir}/*.npz'):
+            ptlon,ptlat = npzfile.split('/')[-1][:-4].split('_')[:]
+            ptlon,ptlat = float(ptlon),float(ptlat)
+            self.addInvPoint(ptlon,ptlat,PostPoint(npzfile))
     def addInvPoint(self,lon,lat,postpoint:PostPoint):
         print(f'Add point {lon:.1f}_{lat:.1f}')
         i,j = self._findInd(lon,lat)
         self.mods[i][j]     = postpoint.avgMod.copy()
         self.profiles[i][j] = ProfileGrid(postpoint.avgMod.genProfileGrid())
         self.misfits[i][j]  = postpoint.avgMod.misfit
-        self.disps[i][j]    = {'T':postpoint.obs['RayPhase']['T'],
-                               'pvelo':postpoint.obs['RayPhase']['c'],
-                               'pvelp':postpoint.avgMod.forward(postpoint.obs['RayPhase']['T']),
-                               'uncer':postpoint.obs['RayPhase']['uncer']}
+        self.disps[i][j]    = {'T':postpoint.obs['T'],
+                               'pvelo':postpoint.obs['c'],
+                               'pvelp':postpoint.avgMod.forward(postpoint.obs['T']),
+                               'uncer':postpoint.obs['uncer']}
     def smooth(self,width=50):
         m,n = len(self.lats),len(self.lons)
         paras = [ [None]*n for _ in range(m)]
@@ -936,10 +948,19 @@ class model3D(object):
         for i in range(m):
             for j in range(n):
                 if not mask[i,j]:
-                    self.mods[i][j].loadFromMC(paras[i][j])
+                    self.mods[i][j].updateVars(paras[i][j])
                     self.profiles[i][j] = ProfileGrid(self.mods[i][j].genProfileGrid())
-
-        
+    def write(self,fname):
+        np.savez_compressed(fname,lons=self.lons,lats=self.lats,profiles=self.profiles,
+                            misfits=self.misfits,disps=self.disps,mods=self.mods)
+    def load(self,fname):
+        tmp = np.load(fname,allow_pickle=True)
+        self.lons = tmp['lons'][()]
+        self.lats = tmp['lats'][()]
+        self.profiles   = tmp['profiles'][()]
+        self.misfits    = tmp['misfits'][()]
+        self.disps      = tmp['disps'][()]
+        self.mods       = tmp['mods'][()]
     def mapview(self,depth):
         mask = self.mask
         vsMap = np.ma.masked_array(np.zeros(mask.shape),mask=mask)
@@ -971,144 +992,142 @@ class model3D(object):
         x,z = x[ind],z[:,ind]
         XX,YY = np.meshgrid(x,y)
         return XX,YY,z
+    def plotSection(self,lon1,lat1,lon2,lat2):
+        XX,YY,Z = self.section(lon1,lat1,lon2,lat2)
+        plt.figure(figsize=[8,4.8])
+        f = interpolate.interp2d(XX[0,:],YY[:,0],Z,kind='cubic')
+        newX = np.linspace(XX[0,0],XX[0,-1],300)
+        newY = np.linspace(YY[0,0],YY[-1,0],300)
+        newZ = f(newX,newY)
+        XX,YY = np.meshgrid(newX,newY)
+        import pycpt;cmap = pycpt.load.gmtColormap('cv_original.cpt')
+        plt.pcolormesh(XX,YY,newZ,shading='gouraud',cmap=cmap,vmin=4.1,vmax=4.4)
+        plt.ylim(20,200)
+        plt.gca().invert_yaxis()
+    def plotMapView(self,mapTerm,vmin=4.1,vmax=4.4):
+        from Triforce.customPlot import plotLocalBase
+        fig,m = plotLocalBase(-132,-121,39,50,dlat=2,dlon=3,resolution='l')
+        m.readshapefile('/home/ayu/Projects/Cascadia/Models/Plates/PB2002_boundaries','PB2002_boundaries',
+            linewidth=2.0,color='orange')
+        m.drawmeridians(np.array([-131,-128,-125,-122]), labels=[0,0,0,1])
+        XX,YY = np.meshgrid(self.lons,self.lats)
+        if mapTerm == 'misfit':
+            cmap = plt.cm.gnuplot_r
+            norm = mpl.colors.BoundaryNorm(np.linspace(0.5,3,6), cmap.N)
+            misfits = np.array(self.misfits)
+            misfits[misfits==None] = np.nan
+            misfits = np.ma.masked_array(misfits,mask=self.mask,fill_value=0)
+            misfits -= 0.10
+            m.pcolormesh(XX,YY,misfits,shading='gouraud',cmap=cmap,latlon=True,norm=norm)
+            plt.title(f'Misfit')
+            plt.colorbar(location='bottom',fraction=0.012,aspect=50)
+        else:
+            import pycpt;cmap = pycpt.load.gmtColormap('cv_original.cpt')
+            vsMap = self.mapview(mapTerm)
+            m.pcolormesh(XX,YY,vsMap,shading='gouraud',cmap=cmap,vmin=vmin,vmax=vmax,latlon=True)
+            plt.title(f'Depth: {mapTerm} km')
+            plt.colorbar(location='bottom',fraction=0.012,aspect=50)
     def copy(self):
         from copy import deepcopy
         return deepcopy(self)
 
 
-
 if __name__ == '__main__':
     pass
-    # a = randomWalkFloat(3.4,3,4,0.2)
+    # # test RandVar
+    # a = RandVar(3.4,3,4,0.2); a.show()
+    # b = a.perturb(); b.show()
+    # c = a.reset('uniform'); c.show()
 
-    # bspl = bsplBasis(np.linspace(0,200,100),5,4)
-    # plt.plot(bspl.z,bspl.basis.T)
+    # B-spline test
+    # bspl = BsplBasis(np.linspace(0,200,100),5,4);bspl.plot()
+    # plt.figure();plt.plot(np.linspace(0,1,bspl.n),bspl*[4.2,4.3,3.9,4.6,4.5])
 
-    # setting=settingDict(); setting.load('setting-Hongda.yml')
-    # setting.updateInfo({'topo':2,'sedthk':1})
-    # setting.updateVariable([8,8,8,8,8,8])
+    # Setting test
+    # setting=Setting(); setting.load('setting-Hongda.yml')
+    # setting.updateInfo(topo=-10,sedthk=1)
+    # setting._updateVars([6,5,4,3,2,1])
 
-    # setting=settingDict(); setting.load('setting-Hongda.yml')
-    # lay1 = surfLayer('sediment',setting['sediment'])
-    # print(lay1.genProfile())
-    # print(lay1.vs)
-    # lay2 = lay1.perturb()
-    # print(lay2.vs)
-    # lay3 = lay2.reset('uniform')
-    # print(lay3.vs)
+    # SurfLayer test
+    # lay1 = SurfLayer('mantle',setting['mantle']);print(lay1.vs)
+    # lay2 = lay1.perturb();print(lay2.vs)
+    # lay3 = lay2.reset('uniform');print(lay3.vs)
+    # print(lay1.paraDict)
 
-    # mod1 = model1D()
-    # mod1.loadSetting('setting-Hongda.yml')
+    # Model1D test
+    # mod1 = Model1D()
+    # mod1.loadSetting('setting-Hongda.yml');mod1.show()
+    # print(dict(mod1.toSetting()))
     # h,vs,vp,rho,qs,qp = mod1.genProfile()
-    # mod1.show()
     # mod2 = mod1.perturb(); mod2.show()
     # mod3 = mod2.reset('uniform'); mod3.show()
     # plt.figure();plt.plot(np.linspace(5,80,100),mod1.forward(np.linspace(5,80,100)))
     # print(mod1.paras())
     # print(mod1.isgood())
-    # zdepth,vs,ltype =  mod1.genProfileGrid()
-    # fig = plt.figure(figsize=[5,7]);plt.plot(vs,zdepth)
-    # if not plt.gca().yaxis_inverted():
-    #     plt.gca().invert_yaxis()
 
-    # with open('setting-Hongda.yml', 'r') as f:
-    #     setting = ezDict(yaml.load(f,Loader=yaml.FullLoader))
-    # # setting.updataValue(['water','h',0],30)
-    # # setting.updataValue(['water','type'],'test')
-    # infoDict = {'topo':-10,'sedthk':20}
-    # setting.updateInfo(infoDict)
-
+    # inversion test
     # random.seed(36)
-    # setting = settingDict(); setting.load('setting-Hongda.yml')
-    # setting.updateInfo({'topo':2,'sedthk':1})
-    # mod1 = model1D(); mod1.loadSetting(setting)
-    # mod2 = mod1.reset('uniform')
     # periods = np.array([10,12,14,16,18,20,24,28,32,36,40,50,60,70,80])
-    # p = Point('setting-Hongda.yml',{'topo':2,'sedthk':1},
-    #           periods,mod2.forward(periods),[0.01]*len(periods))
-    # p.updateSetting((np.array(mod1.paras())+np.array(mod2.paras()))/2)
-    # setting = p.setting.copy()
-    # setting['sediment']['h'][2] = min(setting['sediment']['h'][0],setting['sediment']['h'][2])
-    # p.updateSetting(setting)
-    # # p.MCinvMP(runN=50000,step4uwalk=1000,nprocess=26)
-    # # p.MCinvMP('MCtest_priori',runN=50000,step4uwalk=1000,nprocess=26,priori=True)
+    # setting = Setting(); setting.load('setting-Hongda.yml'); setting.updateInfo(topo=-4,sedthk=0.6)
+    # mod1 = Model1D(); mod1.loadSetting(setting); mod2 = mod1.reset('uniform') # set true model
+    # setting._updateVars((np.array(mod1.paras())+np.array(mod2.paras()))/2) # setting init model
+    # p = Point(setting,topo=-4,sedthk=0.6,
+    #           periods=periods,vels=mod2.forward(periods),uncers=[0.01]*len(periods))
+    # p.MCinvMP(runN=50000,step4uwalk=1000,nprocess=26)
+    # p.MCinvMP('MCtest_priori',runN=50000,step4uwalk=1000,nprocess=26,priori=True)
     # pN = PostPoint('MCtest/test.npz','MCtest_priori/test.npz')
-    # pN.plotCheck()
+    # pN.plotDisp()
+    # fig = pN.plotVsProfileGrid()
+    # mod2.plotProfileGrid(fig=fig,label='True')
+    # pN.plotDistrib()
 
-    # dsetFile = '/home/ayu/Projects/Cascadia/Tasks/runInv/test_surf_thesis_dbase_finalMar.h5'
-    # invDir = '/home/ayu/Projects/Cascadia/Tasks/runInv/inv_thesis_vs_finalMar'
-    # priDir = '/home/ayu/Projects/Cascadia/Tasks/runInv/inv_thesis_vs_finalMar_priori'
-    # id     = '233.0_43.2'
-    # pHD = PostPoint()
-    # pHD.loadpyMCinv(dsetFile,id,invDir,priDir)
-    # # pHD.plotDisp()
-    # # pHD.plotDistrib()
-    # # pHD.plotVsProfile()
-    # pHD.initMod.show()
-
+    # inversion test real data
     # id     = '233.0_43.2'
     # T = [ 10.,  12.,  14.,  16.,  18.,  20.,  22.,  24.,  26.,  28.,  30.,
     #     32.,  36.,  40.,  50.,  60.,  70.,  80.]
-    # vel = [ 3.66170009,  3.72857888,  3.75951126,  3.76266499,  3.77191581,
+    # vels = [ 3.66170009,  3.72857888,  3.75951126,  3.76266499,  3.77191581,
     #     3.7685344 ,  3.77129248,  3.77428902,  3.77529921,  3.78802274,
     #     3.79433664,  3.80568807,  3.82146285,  3.8505667 ,  3.84643676,
     #     3.87612961,  3.91444643,  3.96543979]
-    # uncer = [ 0.01754326,  0.01164089,  0.00903466,  0.00797875,  0.00716722,
+    # uncers = [ 0.01754326,  0.01164089,  0.00903466,  0.00797875,  0.00716722,
     #     0.00713235,  0.00744013,  0.00770071,  0.00797466,  0.00956988,
     #     0.01142398,  0.00890576,  0.00949308,  0.01012225,  0.01201   ,
     #     0.01743369,  0.01614607,  0.01649115]
     # topo = -3.068602323532039
     # sedthk = 0.22750000655653985
-    # p = Point('setting-Hongda.yml',{'topo':topo,'sedthk':sedthk}, T,vel,uncer)
+    # p = Point('setting-Hongda.yml',topo=-4,sedthk=0.6,periods=T,vels= vels,uncers=uncers)
+    # p.MCinvMP(id=id,runN=50000,step4uwalk=1000,nprocess=26)
 
 
 
 
-    npzfile = '/work2/ayu/Cascadia/TomoResults/ani_tomo.npz'
-    tmp = np.load(npzfile,allow_pickle=True)
-    grd,eik = tmp['grd'][()],tmp['eikStack'][()]
-    invModel = model3D(grd.lons,grd.lats)
-    for ptlat in grd.lats:
-        for ptlon in grd.lons:
-            try:
-                p = PostPoint(f'/home/ayu/Projects/Cascadia/Tasks/runInv/ayuMC/{ptlon:.1f}_{ptlat:.1f}.npz')
-            except FileNotFoundError:
-                continue
-            invModel.addInvPoint(ptlon,ptlat,p)
-    invModel.write('invModelAyu.npz')
 
 
-    invModel = model3D()
-    invModel.load('invModelAyu.npz')
-    import pycpt;cmap = pycpt.load.gmtColormap('cv_original.cpt')
-    from scipy import interpolate
 
-    # XX,YY,Z = invModel.section(-131+360,46,-126+360,46)
-    # plt.figure()
-    # plt.pcolor(XX,YY,Z,cmap=cmap,vmin=4.1,vmax=4.4)
-    # plt.gca().invert_yaxis()
-    # f = interpolate.interp2d(XX[0,:],YY[:,0],Z,kind='cubic')
-    # newX = np.linspace(XX[0,0],XX[0,-1],300)
-    # newY = np.linspace(YY[0,0],YY[-1,0],300)
-    # newZ = f(newX,newY)
-    # XX,YY = np.meshgrid(newX,newY)
-    # plt.figure()
-    # plt.ylim(20,200)
-    # plt.pcolormesh(XX,YY,newZ,shading='gouraud',cmap=cmap,vmin=4.1,vmax=4.4)
-    # plt.gca().invert_yaxis()
 
-    invModel.smooth(width=80)
-    XX,YY,Z = invModel.section(-131+360,46,-126+360,46)
-    plt.figure()
-    plt.pcolor(XX,YY,Z,cmap=cmap,vmin=4.1,vmax=4.4)
-    plt.gca().invert_yaxis()
-    f = interpolate.interp2d(XX[0,:],YY[:,0],Z,kind='cubic')
-    newX = np.linspace(XX[0,0],XX[0,-1],300)
-    newY = np.linspace(YY[0,0],YY[-1,0],300)
-    newZ = f(newX,newY)
-    XX,YY = np.meshgrid(newX,newY)
-    plt.figure()
-    plt.ylim(20,200)
-    plt.pcolormesh(XX,YY,newZ,shading='gouraud',cmap=cmap,vmin=4.1,vmax=4.4)
-    plt.gca().invert_yaxis()
+
+    # invModel = Model3D()
+    # invModel.loadInvDir('example-Cascadia/inv')
+    # invModel.write('example-Cascadia/inv3D.npz')
+    # invModel.load('example-Cascadia/inv3D.npz')
+    # invModel.smooth(width=80)
+    # invModel.write('example-Cascadia/inv3D-smooth.npz')
+
+    invModel = Model3D()
+    invModel.load('example-Cascadia/inv3D-smooth.npz')
+
+    invModel.plotSection(-131+360,47,-125+360,47) # I-I'
+    invModel.plotSection(-131+360,46,-125+360,46) # J-J'
+    invModel.plotSection(-131+360,45,-125+360,45) # K-K'
+    invModel.plotSection(-131+360,42,-125+360,42) # L-L'
+
+    invModel.plotMapView(14,vmin=4.1,vmax=4.8)
+    invModel.plotMapView(20,vmin=4.1,vmax=4.75)
+    invModel.plotMapView(30,vmin=4.1,vmax=4.7)
+    invModel.plotMapView(50,vmin=4.0,vmax=4.6)
+    invModel.plotMapView(100,vmin=4.08,vmax=4.48)
+    invModel.plotMapView(150,vmin=4.15,vmax=4.45)
+
+    invModel.plotMapView('misfit',vmin=4.1,vmax=4.8)
+
 

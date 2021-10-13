@@ -6,6 +6,7 @@ from scipy import interpolate
 from Triforce.pltHead import *
 from Triforce.utils import savetxt
 from Triforce.obspyPlus import randString
+from Triforce.customPlot import cvcpt
 import sys; sys.path.append('../')
 import pySurfInv.fast_surf as fast_surf
 
@@ -37,11 +38,12 @@ def randString(N):
     return ''.join([random.choice(string.ascii_letters + string.digits) for i in range(N)])
 def calMantleQ(deps,vpvs,period=1,age=4.0):
     """ get Q value for mantle layer, follw Eq(4) from Ye (2013)
-        Calculate Q value for 20 sec period, Q doesn't change a lot with period
+        Calculate Q value for 20 sec period, Q doesn't change a lot with period, age in unit of Ma
     """
     from scipy.special import erf
     Tm = 1315. # deep mantle temperature in celsius
-    A = 30. # A value in Ye 2013 eq(4) 
+    A = 30. # A value in Ye 2013 eq(4)
+    age = max(1e-3,age)
     temps = Tm*erf(500*deps/np.sqrt(age*365*24*3600))+273.15 # depth dependent mantle temperature in Kelvin
     qs = A * (2*np.pi*1/period)**0.1 * np.exp(0.1*(2.5e5+3.2*9.8*deps*10)/(8.314472*temps))
     qp = 1./(4./3.*vpvs**(-2) / qs + (1-4./3.*vpvs**(-2))/57823.)
@@ -149,7 +151,8 @@ class Setting(dict):
     def _updateWater(self,topo):
         waterDepth = max(-topo,0)
         if waterDepth <= 0:
-            self.pop('water')
+            if 'water' in self.keys():
+                self.pop('water')
         else:
             if 'water' in self.keys():
                 self['water']['h'][0] = waterDepth
@@ -157,13 +160,18 @@ class Setting(dict):
                 print('Warning: topo<0 found! Please add water layer in setting file!!')
     def _updateSediment(self,sedthk):
         self['sediment']['h'][0] = sedthk
-    def updateInfo(self,topo=None,sedthk=None,lithoAge=None):
+    def _updateCrust(self,crsthk):
+        self['crust']['h'][0] = crsthk
+    def updateInfo(self,topo=None,sedthk=None,crsthk=None,lithoAge=None):
         if topo is not None:
             self.info['topo'] = topo
             self._updateWater(topo)
         if sedthk is not None:
             self.info['sedthk'] = sedthk
             self._updateSediment(sedthk)
+        if crsthk is not None:
+            self.info['crsthk'] = crsthk
+            self._updateCrust(crsthk)
         if lithoAge is not None:
             self.info['lithoAge'] = lithoAge
     def _updateVars(self,newParas):  #for test only
@@ -219,7 +227,8 @@ class RandVar(float):
 class SurfLayer(object):
     ''' Horizontal layers used to generate Model1D '''
     def __init__(self,layerType,settingDict) -> None:
-        self.type,self.mtype = layerType,settingDict['type']
+        self.type,self.mtype = layerType,settingDict['mtype']
+        self.stype = '' if 'stype' not in settingDict.keys() else settingDict['stype']
         self.paraDict = {}
         self.paraDict['h'] = dictL2R(settingDict['h'])
         if self.mtype == 'water':
@@ -326,31 +335,39 @@ class SurfLayer(object):
     def genProfile(self):
         vs = self._vsProfile()
         h  = self._hProfile()
-        if self.type == 'water':
+        if self.type+self.stype == 'water':
             vp  = [self.vp]     *self.nFine
             rho = [1.027]       *self.nFine
             qs  = [10000.]      *self.nFine
             qp  = [57822.]      *self.nFine
-        elif self.type == 'sediment':
+        elif self.type+self.stype == 'sediment':
             vpvs = 2.0 if not hasattr(self,'vpvs') else self.vpvs
             # vp   = vs*vpvs
             vp   = vs*1.23 + 1.28   # marine sediments and rocks, Hamilton 1979
             rho  = 0.541 + 0.3601*vp
             qs  = [80.]   *self.nFine
             qp  = [160.]  *self.nFine
-        elif self.type == 'crust':
+        elif self.type+self.stype == 'sedimentland':
+            vpvs = self.vpvs
+            vp   = vs*vpvs
+            rho  = 0.541 + 0.3601*vp
+            qs  = [80.]   *self.nFine
+            qp  = [160.]  *self.nFine
+        elif self.type+self.stype == 'crust':
             vpvs = 1.8 if not hasattr(self,'vpvs') else self.vpvs
             vp   = vs*vpvs
             rho  = 0.541 + 0.3601*vp
             qs  = [600.]   *self.nFine
             qp  = [1400.]  *self.nFine
-        elif self.type == 'mantle':
+        elif self.type+self.stype == 'mantle':
             vpvs = 1.76 if not hasattr(self,'vpvs') else self.vpvs
             vp = vs*vpvs
             rho = 3.4268+(vs-4.5)/4.5
             # rho  = 0.541 + 0.3601*vp    ## from Hongda
             qs  = [150.]   *self.nFine
             qp  = [1400.]  *self.nFine
+        else:
+            raise ValueError('Valid type+subtype')
         # rho = np.array(rho)
         # rho[np.array(vp) > 7.5]       = 3.35
         return np.array([h,vs,vp,rho,qs,qp])
@@ -412,7 +429,23 @@ class Model1D(object):
         self.info   = info
     @property
     def totalH(self):
-        return np.sum([layer.H for layer in self.layers])
+        altitudeH = 0 if 'topo' not in self.info.keys() else max(self.info['topo'],0)
+        return np.sum([layer.H for layer in self.layers])+altitudeH
+    def _ltypes(self,refLayer=False):
+        types = []
+        for layer in self.layers:
+            types += [layer.type]*layer.nFine
+        if refLayer is True:
+            refLayer = self.refLayer
+            types += [refLayer.type]*refLayer.nFine
+        return np.array(types)
+    @property
+    def refLayer(self):
+        profile = np.concatenate([layer.genProfile() for layer in self.layers],axis=1)
+        vs0,h0 = profile[1][-1],profile[0][-1]
+        return SurfLayer('mantle',{'mtype':'linear','h':[300,'fixed'],
+                                'vs':[[vs0,'fixed'],[vs0+0.35/200*300,'fixed']],
+                                'vpvs':1.75}) # 0.35km/s per 200km from AK135
     def loadSetting(self,settingYML):
         setting = Setting(); setting.load(settingYML)
         self.info = setting['Info']; setting.pop('Info')
@@ -425,7 +458,7 @@ class Model1D(object):
     def toSetting(self):
         setting = Setting()
         for layer in self.layers:
-            setting[layer.type] = {'type':layer.mtype}
+            setting[layer.type] = {'mtype':layer.mtype,'stype':layer.stype}
             setting[layer.type].update(dictR2L(layer.paraDict))
         setting[layer.type]['h'] = [self.totalH,'total']
         setting['Info'] = self.info
@@ -461,13 +494,14 @@ class Model1D(object):
             if newMod.isgood():
                 return newMod
         print(f'Error: no good reset:{resetype} found!!')
-    def genProfile(self): # h,vs,vp,rho,qs,qp
+    def genProfile(self,refLayer=False): # h,vs,vp,rho,qs,qp
+        profile = np.concatenate([layer.genProfile() for layer in self.layers],axis=1)
+        typeLst = self._ltypes(refLayer=refLayer)
+        if refLayer is True:
+            profile = np.concatenate((profile,self.refLayer.genProfile()),axis=1)
         if 'lithoAge' in self.info.keys() and self.info['lithoAge'] is not None: # assume mantle is the last layer
-            typeLst = []
-            for layer in self.layers:
-                typeLst += [layer.type]*layer.nFine
             typeLst = np.array(typeLst)
-            tmp = np.concatenate([layer.genProfile() for layer in self.layers],axis=1)
+            tmp = profile.copy()
             h = tmp[0];deps = h.cumsum()
             vpvsC = 1.8  if not hasattr(self.layers[-2],'vpvs') else self.layers[-2].vpvs
             vpvsM = 1.76 if not hasattr(self.layers[-1],'vpvs') else self.layers[-1].vpvs
@@ -481,7 +515,7 @@ class Model1D(object):
             tmp[5,typeLst=='mantle'] = qpMantle[:]
             return tmp
         else:
-            return np.concatenate([layer.genProfile() for layer in self.layers],axis=1)
+            return profile
     def genProfileGrid(self): # h,vs only
         zdepth,vs,ltype = [],[],[]
         try:
@@ -495,16 +529,14 @@ class Model1D(object):
             zOffset = zdepth[-1]
         return zdepth,vs,ltype
     def forward(self,periods=[5,10,20,40,60,80]):
-        pred = _calForward(self.genProfile(),wavetype='Ray',periods=periods)
+        refLayer = False if 'refLayer' not in self.info.keys() else self.info['refLayer']
+        pred = _calForward(self.genProfile(refLayer=refLayer),wavetype='Ray',periods=periods)
         if pred is None:
             print(f'Warning: Forward not complete! Model listed below:')
             self.show()
         return pred
     def isgood(self):
-        ltypes = []
-        for layer in self.layers:
-            ltypes.extend([layer.type]*layer.nFine)
-        ltypes = np.array(ltypes)
+        ltypes = self._ltypes()
         h,vs,vp,rho,qs,qp = self.genProfile()
         vsSediment = vs[ltypes=='sediment']
         vsCrust = vs[ltypes=='crust']
@@ -527,7 +559,10 @@ class Model1D(object):
         if not monoIncrease(vs[ltypes=='crust']): 
             return False
         # negative velocity gradient below moho for ocean
-        if not vsMantle[1]<vsMantle[0]: 
+
+        if 'noNegSlopeBelowCrust' in self.info.keys() and self.info['noNegSlopeBelowCrust'] is True:
+            pass
+        elif not vsMantle[1]<vsMantle[0]:
             return False
         # # vs in crust < 4.3
         # if np.any(vsCrust > 4.3):
@@ -601,10 +636,10 @@ def accept(L0,L1):
         return True
     return random.random() > (L0-L1)/L0
 class Point(object):
-    def __init__(self,settingYML=None,sedthk=None,topo=None,lithoAge=None,
-                      periods=[],vels=[],uncers=[]) -> None:
+    def __init__(self,settingYML=None,periods=[],vels=[],uncers=[],
+                      sedthk=None,crsthk=None,topo=None,lithoAge=None) -> None:
         setting = Setting(); setting.load(settingYML)
-        setting.updateInfo(sedthk=sedthk,topo=topo,lithoAge=lithoAge)
+        setting.updateInfo(sedthk=sedthk,topo=topo,crsthk=crsthk,lithoAge=lithoAge)
         self.initMod = Model1D(); self.initMod.loadSetting(setting)
         self.obs = {'T':periods,'c':vels,'uncer':uncers}    # Rayleigh wave, phase velocity only
     def misfit(self,model=None):
@@ -842,7 +877,6 @@ class PostPoint(Point):
         # I = self.accepts==1
         # plt.plot(np.arange(self.N)[I],self.misfits[I])
 
-
 class ProfileGrid():
     def __init__(self,profileIn) -> None:
         zdepth,vs,ltype = profileIn
@@ -1000,33 +1034,40 @@ class Model3D(object):
         newY = np.linspace(YY[0,0],YY[-1,0],300)
         newZ = f(newX,newY)
         XX,YY = np.meshgrid(newX,newY)
-        import pycpt;cmap = pycpt.load.gmtColormap('cv_original.cpt')
-        plt.pcolormesh(XX,YY,newZ,shading='gouraud',cmap=cmap,vmin=4.1,vmax=4.4)
+        plt.pcolormesh(XX,YY,newZ,shading='gouraud',cmap=cvcpt,vmin=4.1,vmax=4.4)
         plt.ylim(20,200)
         plt.gca().invert_yaxis()
-    def plotMapView(self,mapTerm,vmin=4.1,vmax=4.4):
+    def plotMapView(self,mapTerm,loc='Cascadia',minlon=None,maxlon=None,minlat=None,maxlat=None,
+                    dlat=None,dlon=None,vmin=4.1,vmax=4.4,cmap=None):
         from Triforce.customPlot import plotLocalBase
-        fig,m = plotLocalBase(-132,-121,39,50,dlat=2,dlon=3,resolution='l')
+        if loc=='Cascadia':
+            minlon,maxlon,minlat,maxlat,dlon,dlat = -132,-121,39,50,2,3
+        elif loc=='auto':
+            minlon,maxlon,minlat,maxlat = self.lons[0],self.lons[-1],self.lats[0],self.lats[-1]
+            dlat,dlon = (maxlat-minlat)//5,(maxlon-minlon)//3
+        else:
+            minlon,maxlon,minlat,maxlat,dlon,dlat = loc
+        fig,m = plotLocalBase(minlon,maxlon,minlat,maxlat,dlat=dlat,dlon=dlon,resolution='l')
         m.readshapefile('/home/ayu/Projects/Cascadia/Models/Plates/PB2002_boundaries','PB2002_boundaries',
             linewidth=2.0,color='orange')
-        m.drawmeridians(np.array([-131,-128,-125,-122]), labels=[0,0,0,1])
-        XX,YY = np.meshgrid(self.lons,self.lats)
         if mapTerm == 'misfit':
-            cmap = plt.cm.gnuplot_r
+            cmap = plt.cm.gnuplot_r if cmap is None else cmap
             norm = mpl.colors.BoundaryNorm(np.linspace(0.5,3,6), cmap.N)
             misfits = np.array(self.misfits)
             misfits[misfits==None] = np.nan
             misfits = np.ma.masked_array(misfits,mask=self.mask,fill_value=0)
             misfits -= 0.10
-            m.pcolormesh(XX,YY,misfits,shading='gouraud',cmap=cmap,latlon=True,norm=norm)
+            m.pcolormesh(self.XX,self.YY,misfits,shading='gouraud',cmap=cmap,latlon=True,norm=norm)
             plt.title(f'Misfit')
             plt.colorbar(location='bottom',fraction=0.012,aspect=50)
         else:
-            import pycpt;cmap = pycpt.load.gmtColormap('cv_original.cpt')
+            if cmap is None:
+                cmap = cvcpt
             vsMap = self.mapview(mapTerm)
-            m.pcolormesh(XX,YY,vsMap,shading='gouraud',cmap=cmap,vmin=vmin,vmax=vmax,latlon=True)
+            m.pcolormesh(self.XX,self.YY,vsMap,shading='gouraud',cmap=cmap,vmin=vmin,vmax=vmax,latlon=True)
             plt.title(f'Depth: {mapTerm} km')
             plt.colorbar(location='bottom',fraction=0.012,aspect=50)
+        return fig,m
     def copy(self):
         from copy import deepcopy
         return deepcopy(self)
@@ -1066,20 +1107,20 @@ if __name__ == '__main__':
     # print(mod1.isgood())
 
     # inversion test
-    # random.seed(36)
-    # periods = np.array([10,12,14,16,18,20,24,28,32,36,40,50,60,70,80])
-    # setting = Setting(); setting.load('setting-Hongda.yml'); setting.updateInfo(topo=-4,sedthk=0.6)
-    # mod1 = Model1D(); mod1.loadSetting(setting); mod2 = mod1.reset('uniform') # set true model
-    # setting._updateVars((np.array(mod1.paras())+np.array(mod2.paras()))/2) # setting init model
-    # p = Point(setting,topo=-4,sedthk=0.6,
-    #           periods=periods,vels=mod2.forward(periods),uncers=[0.01]*len(periods))
-    # p.MCinvMP(runN=50000,step4uwalk=1000,nprocess=26)
-    # p.MCinvMP('MCtest_priori',runN=50000,step4uwalk=1000,nprocess=26,priori=True)
-    # pN = PostPoint('MCtest/test.npz','MCtest_priori/test.npz')
-    # pN.plotDisp()
-    # fig = pN.plotVsProfileGrid()
-    # mod2.plotProfileGrid(fig=fig,label='True')
-    # pN.plotDistrib()
+    random.seed(36)
+    periods = np.array([10,12,14,16,18,20,24,28,32,36,40,50,60,70,80])
+    setting = Setting(); setting.load('setting-Hongda.yml'); setting.updateInfo(topo=-4,sedthk=0.6)
+    mod1 = Model1D(); mod1.loadSetting(setting); mod2 = mod1.reset('uniform') # set true model
+    setting._updateVars((np.array(mod1.paras())+np.array(mod2.paras()))/2) # setting init model
+    p = Point(setting,topo=-4,sedthk=0.6,
+              periods=periods,vels=mod2.forward(periods),uncers=[0.01]*len(periods))
+    p.MCinvMP(runN=50000,step4uwalk=1000,nprocess=26)
+    p.MCinvMP('MCtest_priori',runN=50000,step4uwalk=1000,nprocess=26,priori=True)
+    postp = PostPoint('MCtest/test.npz','MCtest_priori/test.npz')
+    postp.plotDisp()
+    fig = postp.plotVsProfileGrid()
+    mod2.plotProfileGrid(fig=fig,label='True')
+    postp.plotDistrib()
 
     # inversion test real data
     # id     = '233.0_43.2'
@@ -1113,21 +1154,21 @@ if __name__ == '__main__':
     # invModel.smooth(width=80)
     # invModel.write('example-Cascadia/inv3D-smooth.npz')
 
-    invModel = Model3D()
-    invModel.load('example-Cascadia/inv3D-smooth.npz')
+    # invModel = Model3D()
+    # invModel.load('example-Cascadia/inv3D-smooth.npz')
 
-    invModel.plotSection(-131+360,47,-125+360,47) # I-I'
-    invModel.plotSection(-131+360,46,-125+360,46) # J-J'
-    invModel.plotSection(-131+360,45,-125+360,45) # K-K'
-    invModel.plotSection(-131+360,42,-125+360,42) # L-L'
+    # invModel.plotSection(-131+360,47,-125+360,47) # I-I'
+    # invModel.plotSection(-131+360,46,-125+360,46) # J-J'
+    # invModel.plotSection(-131+360,45,-125+360,45) # K-K'
+    # invModel.plotSection(-131+360,42,-125+360,42) # L-L'
 
-    invModel.plotMapView(14,vmin=4.1,vmax=4.8)
-    invModel.plotMapView(20,vmin=4.1,vmax=4.75)
-    invModel.plotMapView(30,vmin=4.1,vmax=4.7)
-    invModel.plotMapView(50,vmin=4.0,vmax=4.6)
-    invModel.plotMapView(100,vmin=4.08,vmax=4.48)
-    invModel.plotMapView(150,vmin=4.15,vmax=4.45)
+    # invModel.plotMapView(14,vmin=4.1,vmax=4.8)
+    # invModel.plotMapView(20,vmin=4.1,vmax=4.75)
+    # invModel.plotMapView(30,vmin=4.1,vmax=4.7)
+    # invModel.plotMapView(50,vmin=4.0,vmax=4.6)
+    # invModel.plotMapView(100,vmin=4.08,vmax=4.48)
+    # invModel.plotMapView(150,vmin=4.15,vmax=4.45)
 
-    invModel.plotMapView('misfit',vmin=4.1,vmax=4.8)
+    # invModel.plotMapView('misfit',vmin=4.1,vmax=4.8)
 
 

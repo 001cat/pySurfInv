@@ -10,23 +10,23 @@ from Triforce.customPlot import cvcpt
 import sys; sys.path.append('../')
 import pySurfInv.fast_surf as fast_surf
 
-def plotLayer(h,v,fig=None,label=None):
+def plotLayer(h,v,fig=None,label=None,**kwargs):
     if fig is None:
         fig = plt.figure(figsize=[5,7])
     else:
         plt.figure(fig.number)
     hNew = np.insert(np.repeat(np.cumsum(h),2)[:-1],0,0)
     vNew = np.repeat(v,2)
-    plt.plot(vNew,hNew,label=label)
+    plt.plot(vNew,hNew,label=label,**kwargs)
     if not fig.axes[0].yaxis_inverted():
         fig.axes[0].invert_yaxis()
     return fig
-def plotGrid(zdepth,v,fig=None,label=None):
+def plotGrid(zdepth,v,fig=None,label=None,**kwargs):
     if fig is None:
         fig = plt.figure(figsize=[5,7])
     else:
         plt.figure(fig.number)
-    plt.plot(v,zdepth,label=label)
+    plt.plot(v,zdepth,label=label,**kwargs)
     if not fig.axes[0].yaxis_inverted():
         fig.axes[0].invert_yaxis()
     return fig
@@ -428,9 +428,12 @@ class Model1D(object):
         self.layers = layerList
         self.info   = info
     @property
-    def totalH(self):
+    def altitudeH(self):
         altitudeH = 0 if 'topo' not in self.info.keys() else max(self.info['topo'],0)
-        return np.sum([layer.H for layer in self.layers])+altitudeH
+        return altitudeH
+    @property
+    def totalH(self):
+        return np.sum([layer.H for layer in self.layers])
     def _ltypes(self,refLayer=False):
         types = []
         for layer in self.layers:
@@ -451,16 +454,17 @@ class Model1D(object):
         self.info = setting['Info']; setting.pop('Info')
         if list(setting.values())[-1]['h'][1] == 'total':
             Hs = [setting[ltype]['h'][0] for ltype in setting.keys()]
-            setting[list(setting.keys())[-1]]['h'] = [Hs[-1]-np.sum(Hs[:-1]),'total']
+            setting[list(setting.keys())[-1]]['h'] = [Hs[-1]+self.altitudeH-np.sum(Hs[:-1]),'total']
         else:
             raise ValueError('Thickness of last layer should be labeled as total!')
         self.layers = [SurfLayer(ltype,setting[ltype]) for ltype in setting.keys()]
     def toSetting(self):
+        z0 = 0 if 'topo' not in self.info.keys() else max(0,self.info['topo'])
         setting = Setting()
         for layer in self.layers:
             setting[layer.type] = {'mtype':layer.mtype,'stype':layer.stype}
             setting[layer.type].update(dictR2L(layer.paraDict))
-        setting[layer.type]['h'] = [self.totalH,'total']
+        setting[layer.type]['h'] = [self.totalH-z0,'total']
         setting['Info'] = self.info
         return deepcopy(setting)
     def setFinalH(self,totalH):
@@ -830,7 +834,13 @@ class PostPoint(Point):
         T,vel,uncer = self.obs['T'],self.obs['c'],\
                       self.obs['uncer']
         plt.figure()
-        plt.errorbar(T,vel,uncer,ls='None',capsize=3,label='Observation')
+        mod = self.avgMod.copy()
+        indFinAcc = np.where(self.accFinal)[0]
+        for _ in range(min(len(indFinAcc),500)):
+            i = random.choice(indFinAcc)
+            mod.updateVars(self.MCparas[i,:])
+            plt.plot(T,mod.forward(T),color='grey',lw=0.1)
+        plt.errorbar(T,vel,uncer,ls='None',color='k',capsize=3,capthick=2,elinewidth=2,label='Observation')
         plt.plot(T,self.avgMod.forward(T),label='Avg accepted')
         plt.plot(T,self.minMod.forward(T),label='Min misfit')
         plt.plot(T,self.initMod.forward(T),label='Initial')
@@ -851,6 +861,12 @@ class PostPoint(Point):
             plt.title(f'N = {self.accFinal.sum()}/{len(self.accFinal)}')
     def plotVsProfile(self):
         fig = self.initMod.plotProfile(label='Initial')
+        mod = self.avgMod.copy()
+        indFinAcc = np.where(self.accFinal)[0]
+        for _ in range(min(len(indFinAcc),500)):
+            i = random.choice(indFinAcc)
+            mod.updateVars(self.MCparas[i,:])
+            mod.plotProfile(fig=fig,color='grey',lw=0.1)
         self.avgMod.plotProfile(fig=fig,label='Avg')
         self.minMod.plotProfile(fig=fig,label='Min')
         plt.xlim(3.8,4.8)
@@ -858,12 +874,24 @@ class PostPoint(Point):
         return fig
     def plotVsProfileGrid(self):
         fig = self.initMod.plotProfileGrid(label='Initial')
+        mod = self.avgMod.copy()
+        indFinAcc = np.where(self.accFinal)[0]
+        for _ in range(min(len(indFinAcc),1000)):
+            i = random.choice(indFinAcc)
+            mod.updateVars(self.MCparas[i,:])
+            mod.plotProfileGrid(fig=fig,color='grey',lw=0.1)
         self.avgMod.plotProfileGrid(fig=fig,label='Avg')
         self.minMod.plotProfileGrid(fig=fig,label='Min')
         plt.xlim(3.8,4.8)
         plt.legend()
         return fig
     def plotCheck(self):
+        plt.figure()
+        ksquare = self.misfits**2*len(self.obs['T'])
+        plt.plot(ksquare)
+        ind = np.where(self.accepts>0.1)[0]
+        plt.plot(ind,ksquare[ind],'or')
+        plt.plot([0,self.N],[self.thres**2*len(self.obs['T'])]*2,'--g')
         pass
         ''' plot likelihood '''
         # plt.figure()

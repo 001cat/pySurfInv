@@ -3,10 +3,11 @@ import numpy as np
 import multiprocessing as mp
 from copy import deepcopy
 from scipy import interpolate
+from geographiclib.geodesic import Geodesic
 from Triforce.pltHead import *
 from Triforce.utils import savetxt
 from Triforce.obspyPlus import randString
-from Triforce.customPlot import cvcpt
+from Triforce.customPlot import cvcpt,rbcpt
 import sys; sys.path.append('../')
 import pySurfInv.fast_surf as fast_surf
 
@@ -209,11 +210,13 @@ class RandVar(float):
         else:
             raise ValueError('Unknown reset type! Could only be uniform or center(default)')
         return RandVar(vNew,self.vmin,self.vmax,self.step)
-    def perturb(self):
+    def perturb(self,avoidLargeStep=True):
         if self.vmin == None:
             return RandVar(float(self),self.vmin,self.vmax,self.step)
+        if avoidLargeStep:
+            step = min((self.vmax-self.vmin)/2,self.step)
         for i in range(1000):
-            vNew = random.gauss(self,self.step)
+            vNew = random.gauss(self,step)
             if vNew < self.vmax and vNew > self.vmin:
                 break
             if i == 999:
@@ -938,7 +941,7 @@ class Model3D(object):
         self.lons = np.array(lons)
         self.lats = np.array(lats)
         self.mods       = [ [None]*len(lons) for _ in range(len(lats))]
-        self.profiles   = [ [None]*len(lons) for _ in range(len(lats))]
+        self._profiles   = [ [None]*len(lons) for _ in range(len(lats))]
         self.misfits    = [ [None]*len(lons) for _ in range(len(lats))]
         self.disps      = [ [None]*len(lons) for _ in range(len(lats))]
     @property
@@ -963,7 +966,7 @@ class Model3D(object):
         mask = np.ones((m,n),dtype=bool)
         for i in range(m):
             for j in range(n):
-                mask[i,j] = (self.profiles[i][j] is None)
+                mask[i,j] = (self._profiles[i][j] is None)
         return mask
     
     def loadInvDir(self,invDir='example-Cascadia'):
@@ -987,12 +990,115 @@ class Model3D(object):
         print(f'Add point {lon:.1f}_{lat:.1f}')
         i,j = self._findInd(lon,lat)
         self.mods[i][j]     = postpoint.avgMod.copy()
-        self.profiles[i][j] = ProfileGrid(postpoint.avgMod.genProfileGrid())
+        self._profiles[i][j] = ProfileGrid(postpoint.avgMod.genProfileGrid())
         self.misfits[i][j]  = postpoint.avgMod.misfit
         self.disps[i][j]    = {'T':postpoint.obs['T'],
                                'pvelo':postpoint.obs['c'],
                                'pvelp':postpoint.avgMod.forward(postpoint.obs['T']),
                                'uncer':postpoint.obs['uncer']}
+    def profile(self,z,lat,lon):
+        lon = lon + 360*(lon < 0)
+        if (lon-self.lons[0]) * (lon-self.lons[-1]) > 0:
+            # raise ValueError('Longitude is out of range!')
+            return np.nan
+        if (lat-self.lats[0]) * (lat-self.lats[-1]) > 0:
+            # raise ValueError('Latitude is out of range!')
+            return np.nan
+
+        i = np.where(self.lons-lon>=0)[0][0]
+        j = np.where(self.lats-lat>=0)[0][0]
+        try:
+            p0 = self._profiles[j-1,i-1].value(z)
+            p1 = self._profiles[j,i-1].value(z)
+            p2 = self._profiles[j-1,i].value(z)
+            p3 = self._profiles[j,i].value(z)
+            Dx = self.lons[i] - self.lons[i-1]
+            Dy = self.lats[j] - self.lats[j-1]
+            dx = lon - self.lons[i-1]
+            dy = lat - self.lats[j-1]
+            p = p0+(p1-p0)*dy/Dy+(p2-p0)*dx/Dx+(p0+p3-p1-p2)*dx*dy/Dx/Dy
+            return p
+        except AttributeError:
+            return np.nan*np.ones(z.shape)
+
+    def smoothNew(self,width=50):
+        ''' To combine and smooth areas with different model settings '''
+        def updateArray(a,b):
+            if len(set(a)) != len(a) or len(set(b)) != len(b):
+                raise ValueError(f'Error: repeat element found: {a} | {b}!!')
+            a,b = list(a),list(b)
+            i,j = 0,0
+            while i <= len(a) and j<len(b):
+                if b[j] not in a[i:]:
+                    a.insert(i,b[j])
+                    i += 1
+                else:
+                    i += a[i:].index(b[j])+1
+                j+=1
+            return np.array(a)
+        lDict = {'water':1,'sediment':5,'crust':30,'mantle':200}
+        m,n = len(self.lats),len(self.lons)
+        allLayerTypes = np.array([])
+        for i in range(m):
+            for j in range(n):
+                if self.mods[i][j] is not None:
+                    allLayerTypes = updateArray(allLayerTypes,[l.type for l in self.mods[i][j].layers])
+        nFines = np.array([lDict[layerType] for layerType in allLayerTypes])
+        zMat   = np.ones((nFines.sum(),m,n))
+        vsMat  = np.ones((nFines.sum(),m,n))
+        ltypeSmooth = []
+        for layerType in allLayerTypes:
+            ltypeSmooth.extend([layerType]*lDict[layerType])
+        def reSampleProfile(inProfileGrid):
+            z,vs,ltype = inProfileGrid
+            zNew,vsNew = np.zeros(nFines.sum()),np.zeros(nFines.sum())
+            ltypeNew = []
+            k,kNew = 0,0
+            for layerType,nFine in zip(allLayerTypes,nFines):
+                dk,dkNew = (np.array(ltype) == layerType).sum(),nFine
+                zNew[kNew:kNew+dkNew] = np.linspace(z[k],z[k+max(0,dk-1)],dkNew)
+                vsNew[kNew:kNew+dkNew] = np.interp(zNew[kNew:kNew+dkNew],z[k:k+dk],vs[k:k+dk])
+                ltypeNew.extend([layerType]*dkNew)
+                k += dk
+                kNew += dkNew
+            return zNew,vsNew,ltypeNew
+        print('reSample')
+        for i in range(m):
+            for j in range(n):
+                if self.mods[i][j] is not None:
+                    z,vs,_ = reSampleProfile(self.mods[i][j].genProfileGrid())
+                else:
+                    z,vs,_ = np.nan*np.ones(nFines.sum()),np.nan*np.ones(nFines.sum()),np.nan*np.ones(nFines.sum())
+                zMat[:,i,j] = z[:]
+                vsMat[:,i,j] = vs[:]
+        zMatSmooth = zMat.copy()
+        vsMatSmooth = vsMat.copy()
+        print('smoothing')
+        for k in range(nFines.sum()):
+            print(f'{k+1}/{nFines.sum()}')
+            zMatSmooth[k,:,:] = mapSmooth(self.lons,self.lats,zMat[k,:,:],width=width)
+            vsMatSmooth[k,:,:] = mapSmooth(self.lons,self.lats,vsMat[k,:,:],width=width)
+        for i in range(m):
+            for j in range(n):
+                if not self.mask[i,j]:
+                    self._profiles[i][j] = ProfileGrid((zMatSmooth[:,i,j],vsMatSmooth[:,i,j],
+                                                        ltypeSmooth))
+
+        # for i in range(m):
+        #     for j in range(n):
+        #         zMat[:,i,j] = 
+        # # for layerType in allLayerTypes:
+        # for i in range(m):
+        #     for j in range(n):
+        #         z,vs,ltype = self.mods[i][j].genProfileGrid()
+        #         k = 0
+        #         kFine = 0
+        #         for layerType,nFine in zip(allLayerTypes,nFines):
+        #             dk = (ltype == layerType).sum()
+        #             zMat[kFine:kFine+nFine,i,j] = np.linspace(z[k],z[k+dk],nFine)
+        #             vsMat[kFine:kFine+nFine,i,j] = np.interp(np.linspace(z[k],z[k+dk],nFine),)
+        #         zMat[:,i,j],vsMat[:,i,j] = 
+
     def smooth(self,width=50):
         m,n = len(self.lats),len(self.lons)
         paras = [ [None]*n for _ in range(m)]
@@ -1011,15 +1117,17 @@ class Model3D(object):
             for j in range(n):
                 if not mask[i,j]:
                     self.mods[i][j].updateVars(paras[i][j])
-                    self.profiles[i][j] = ProfileGrid(self.mods[i][j].genProfileGrid())
+                    self._profiles[i][j] = ProfileGrid(self.mods[i][j].genProfileGrid())
+
+
     def write(self,fname):
-        np.savez_compressed(fname,lons=self.lons,lats=self.lats,profiles=self.profiles,
+        np.savez_compressed(fname,lons=self.lons,lats=self.lats,profiles=self._profiles,
                             misfits=self.misfits,disps=self.disps,mods=self.mods)
     def load(self,fname):
         tmp = np.load(fname,allow_pickle=True)
         self.lons = tmp['lons'][()]
         self.lats = tmp['lats'][()]
-        self.profiles   = tmp['profiles'][()]
+        self._profiles   = tmp['profiles'][()]
         self.misfits    = tmp['misfits'][()]
         self.disps      = tmp['disps'][()]
         self.mods       = tmp['mods'][()]
@@ -1030,40 +1138,37 @@ class Model3D(object):
         for i in range(m):
             for j in range(n):
                 if not mask[i,j]:
-                    vsMap[i,j] = self.profiles[i][j].value(depth)
+                    vsMap[i,j] = self._profiles[i][j].value(depth)
         return vsMap
     def section(self,lon1,lat1,lon2,lat2):
-        i1,j1 = self._findInd(lon1,lat1)
-        i2,j2 = self._findInd(lon2,lat2)
-        if i1==i2:
-            x = self.lons[j1:j2+1]
-            profiles = [self.profiles[i1][j] for j in range(j1,j2+1)]
-        elif j1==j2:
-            x = self.lats[i1:i2+1]
-            profiles = [self.profiles[i][j1] for i in range(i1,i2+1)]
-        else:
-            raise ValueError()
-        y = np.linspace(0,199.99,201)
+        # lon1,lat1,lon2,lat2 = -131+360,46,-125+360,43.8
+        geoDict = Geodesic.WGS84.Inverse(lat1,lon1,lat2,lon2)
+        # lats,lons = [],[]
+        x = np.linspace(0,geoDict['s12'],301)/1000
+        y = np.linspace(0,200-0.01,201)
         z = np.zeros((len(y),len(x)))
-        for i in range(len(x)):
-            if profiles[i] is None:
-                z[:,i] = np.nan
-            else:
-                z[:,i] = profiles[i].value(y)
-        ind = ~np.isnan(z[0,:])
-        x,z = x[ind],z[:,ind]
+        for i,d in enumerate(x*1000):
+            tmp = Geodesic.WGS84.Direct(lat1,lon1,geoDict['azi1'],d)
+            # lats.append(tmp['lat2']);lons.append(tmp['lon2'])
+            z[:,i] = self.profile(y,tmp['lat2'],tmp['lon2'])
+        z = np.ma.masked_array(z,np.isnan(z))
+        if abs(lon1-lon2)<0.01:
+            x = np.linspace(lat1,lat2,301)
+        elif abs(lat1-lat2)<0.01:
+            x = np.linspace(lon1,lon2,301)
         XX,YY = np.meshgrid(x,y)
         return XX,YY,z
-    def plotSection(self,lon1,lat1,lon2,lat2):
+    def plotSection(self,lon1,lat1,lon2,lat2,vmin=4.1,vmax=4.4,cmap=cvcpt,):
         XX,YY,Z = self.section(lon1,lat1,lon2,lat2)
         plt.figure(figsize=[8,4.8])
-        f = interpolate.interp2d(XX[0,:],YY[:,0],Z,kind='cubic')
-        newX = np.linspace(XX[0,0],XX[0,-1],300)
-        newY = np.linspace(YY[0,0],YY[-1,0],300)
-        newZ = f(newX,newY)
-        XX,YY = np.meshgrid(newX,newY)
-        plt.pcolormesh(XX,YY,newZ,shading='gouraud',cmap=cvcpt,vmin=4.1,vmax=4.4)
+        # f = interpolate.interp2d(XX[0,:],YY[:,0],Z,kind='cubic')
+        # newX = np.linspace(XX[0,0],XX[0,-1],300)
+        # newY = np.linspace(YY[0,0],YY[-1,0],300)
+        # newZ = f(newX,newY)
+        # XX,YY = np.meshgrid(newX,newY)
+        plt.pcolormesh(XX,YY,Z,shading='gouraud',cmap=cmap,vmin=vmin,vmax=vmax)
         plt.ylim(20,200)
+        plt.colorbar(orientation='horizontal',fraction=0.1,aspect=50,pad=0.08)
         plt.gca().invert_yaxis()
     def plotMapView(self,mapTerm,loc='Cascadia',minlon=None,maxlon=None,minlat=None,maxlat=None,
                     dlat=None,dlon=None,vmin=4.1,vmax=4.4,cmap=None):

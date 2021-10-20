@@ -844,9 +844,9 @@ class PostPoint(Point):
             mod.updateVars(self.MCparas[i,:])
             plt.plot(T,mod.forward(T),color='grey',lw=0.1)
         plt.errorbar(T,vel,uncer,ls='None',color='k',capsize=3,capthick=2,elinewidth=2,label='Observation')
+        plt.plot(T,self.initMod.forward(T),label='Initial')
         plt.plot(T,self.avgMod.forward(T),label='Avg accepted')
         plt.plot(T,self.minMod.forward(T),label='Min misfit')
-        plt.plot(T,self.initMod.forward(T),label='Initial')
         plt.legend()
         plt.title('Dispersion')
     def plotDistrib(self,inds='all'):
@@ -971,17 +971,18 @@ class Model3D(object):
     
     def loadInvDir(self,invDir='example-Cascadia'):
         ptlons,ptlats = [],[]
-        try: # check format and initialize
-            for npzfile in glob.glob(f'{invDir}/*.npz'):
-                ptlon,ptlat = npzfile.split('/')[-1][:-4].split('_')[:]
-                ptlons.append(ptlon); ptlats.append(ptlat)
-            ptlons=np.array([float(a) for a in set(ptlons)]); ptlons.sort(); dlon = min(np.diff(ptlons))
-            ptlats=np.array([float(a) for a in set(ptlats)]); ptlats.sort(); dlat = min(np.diff(ptlats))
-            lons = np.arange(np.floor(ptlons[0]),np.ceil(ptlons[-1])+dlon/2,dlon)
-            lats = np.arange(np.floor(ptlats[0]),np.ceil(ptlats[-1])+dlat/2,dlat)
-            self.__init__(lons,lats)
-        except:
-            raise TypeError('Could not take lat/lon, please make sure the format is invDir/lon_lat.npz')
+        if len(self.lons) == 0:
+            try: # check format and initialize
+                for npzfile in glob.glob(f'{invDir}/*.npz'):
+                    ptlon,ptlat = npzfile.split('/')[-1][:-4].split('_')[:]
+                    ptlons.append(ptlon); ptlats.append(ptlat)
+                ptlons=np.array([float(a) for a in set(ptlons)]); ptlons.sort(); dlon = min(np.diff(ptlons))
+                ptlats=np.array([float(a) for a in set(ptlats)]); ptlats.sort(); dlat = min(np.diff(ptlats))
+                lons = np.arange(np.floor(ptlons[0]),np.ceil(ptlons[-1])+dlon/2,dlon)
+                lats = np.arange(np.floor(ptlats[0]),np.ceil(ptlats[-1])+dlat/2,dlat)
+                self.__init__(lons,lats)
+            except:
+                raise TypeError('Could not take lat/lon, please make sure the format is invDir/lon_lat.npz')
         for npzfile in glob.glob(f'{invDir}/*.npz'):
             ptlon,ptlat = npzfile.split('/')[-1][:-4].split('_')[:]
             ptlon,ptlat = float(ptlon),float(ptlat)
@@ -1021,7 +1022,7 @@ class Model3D(object):
         except AttributeError:
             return np.nan*np.ones(z.shape)
 
-    def smoothNew(self,width=50):
+    def smoothGrid(self,width=50):
         ''' To combine and smooth areas with different model settings '''
         def updateArray(a,b):
             if len(set(a)) != len(a) or len(set(b)) != len(b):
@@ -1057,7 +1058,9 @@ class Model3D(object):
             for layerType,nFine in zip(allLayerTypes,nFines):
                 dk,dkNew = (np.array(ltype) == layerType).sum(),nFine
                 zNew[kNew:kNew+dkNew] = np.linspace(z[k],z[k+max(0,dk-1)],dkNew)
-                vsNew[kNew:kNew+dkNew] = np.interp(zNew[kNew:kNew+dkNew],z[k:k+dk],vs[k:k+dk])
+                # print(z[k:k+dk])
+                # print(zNew[kNew:kNew+dkNew])
+                vsNew[kNew:kNew+dkNew] = np.interp(zNew[kNew:kNew+dkNew],z[k:k+max(dk,1)],vs[k:k+max(dk,1)])
                 ltypeNew.extend([layerType]*dkNew)
                 k += dk
                 kNew += dkNew
@@ -1084,20 +1087,6 @@ class Model3D(object):
                     self._profiles[i][j] = ProfileGrid((zMatSmooth[:,i,j],vsMatSmooth[:,i,j],
                                                         ltypeSmooth))
 
-        # for i in range(m):
-        #     for j in range(n):
-        #         zMat[:,i,j] = 
-        # # for layerType in allLayerTypes:
-        # for i in range(m):
-        #     for j in range(n):
-        #         z,vs,ltype = self.mods[i][j].genProfileGrid()
-        #         k = 0
-        #         kFine = 0
-        #         for layerType,nFine in zip(allLayerTypes,nFines):
-        #             dk = (ltype == layerType).sum()
-        #             zMat[kFine:kFine+nFine,i,j] = np.linspace(z[k],z[k+dk],nFine)
-        #             vsMat[kFine:kFine+nFine,i,j] = np.interp(np.linspace(z[k],z[k+dk],nFine),)
-        #         zMat[:,i,j],vsMat[:,i,j] = 
 
     def smooth(self,width=50):
         m,n = len(self.lats),len(self.lons)
@@ -1158,7 +1147,7 @@ class Model3D(object):
             x = np.linspace(lon1,lon2,301)
         XX,YY = np.meshgrid(x,y)
         return XX,YY,z
-    def plotSection(self,lon1,lat1,lon2,lat2,vmin=4.1,vmax=4.4,cmap=cvcpt,):
+    def plotSection(self,lon1,lat1,lon2,lat2,vmin=4.1,vmax=4.4,cmap=cvcpt,shading='gouraud'):
         XX,YY,Z = self.section(lon1,lat1,lon2,lat2)
         plt.figure(figsize=[8,4.8])
         # f = interpolate.interp2d(XX[0,:],YY[:,0],Z,kind='cubic')
@@ -1166,7 +1155,7 @@ class Model3D(object):
         # newY = np.linspace(YY[0,0],YY[-1,0],300)
         # newZ = f(newX,newY)
         # XX,YY = np.meshgrid(newX,newY)
-        plt.pcolormesh(XX,YY,Z,shading='gouraud',cmap=cmap,vmin=vmin,vmax=vmax)
+        plt.pcolormesh(XX,YY,Z,shading=shading,cmap=cmap,vmin=vmin,vmax=vmax)
         plt.ylim(20,200)
         plt.colorbar(orientation='horizontal',fraction=0.1,aspect=50,pad=0.08)
         plt.gca().invert_yaxis()

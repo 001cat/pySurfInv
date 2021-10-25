@@ -877,6 +877,7 @@ class PostPoint(Point):
         return fig
     def plotVsProfileGrid(self):
         fig = self.initMod.plotProfileGrid(label='Initial')
+        fig.set_figheight(8.4);fig.set_figwidth(5)
         mod = self.avgMod.copy()
         indFinAcc = np.where(self.accFinal)[0]
         for _ in range(min(len(indFinAcc),1000)):
@@ -885,7 +886,7 @@ class PostPoint(Point):
             mod.plotProfileGrid(fig=fig,color='grey',lw=0.1)
         self.avgMod.plotProfileGrid(fig=fig,label='Avg')
         self.minMod.plotProfileGrid(fig=fig,label='Min')
-        plt.xlim(3.8,4.8)
+        plt.xlim(3.0,4.8)
         plt.legend()
         return fig
     def plotCheck(self):
@@ -910,12 +911,14 @@ class PostPoint(Point):
 
 class ProfileGrid():
     def __init__(self,profileIn) -> None:
-        zdepth,vs,ltype = profileIn
+        # zdepth,vs,ltype = profileIn
         self.zdepth = np.array(profileIn[0])
         self.vs     = np.array(profileIn[1])
         self.ltype  = np.array(profileIn[2])
     def value(self,z):
         return np.interp(z,self.zdepth,self.vs,left=np.nan,right=np.nan)
+    # def valueType(self,z):
+    #     return self.ltype[np.abs(self.zdepth-z).argmin()]
 
 def mapSmooth(lons,lats,z,tension=0.0, width=50.):
     lons = lons.round(decimals=4)
@@ -968,7 +971,7 @@ class Model3D(object):
             for j in range(n):
                 mask[i,j] = (self._profiles[i][j] is None)
         return mask
-    
+
     def loadInvDir(self,invDir='example-Cascadia'):
         ptlons,ptlats = [],[]
         if len(self.lons) == 0:
@@ -998,6 +1001,17 @@ class Model3D(object):
                                'pvelp':postpoint.avgMod.forward(postpoint.obs['T']),
                                'uncer':postpoint.obs['uncer']}
     def profile(self,z,lat,lon):
+        # def interp2D_str(str0,str1,str2,str3,dx,dy,Dx,Dy):
+        #     d = {}
+        #     w0 = (Dx-dx)/Dx+(Dy-dy)/Dy
+        #     w1 = dx/Dx+(Dy-dy)/Dy
+        #     w2 = (Dx-dx)/Dx+dy/Dy
+        #     w3 = dx/Dx+dy/Dy
+        #     for s,w in zip([str0,str1,str2,str3],[w0,w1,w2,w3]):
+        #         d[s] = w if s not in d.keys() else w+d[s]
+        #     return max(d, key=d.get)
+            
+
         lon = lon + 360*(lon < 0)
         if (lon-self.lons[0]) * (lon-self.lons[-1]) > 0:
             # raise ValueError('Longitude is out of range!')
@@ -1019,6 +1033,10 @@ class Model3D(object):
             dy = lat - self.lats[j-1]
             p = p0+(p1-p0)*dy/Dy+(p2-p0)*dx/Dx+(p0+p3-p1-p2)*dx*dy/Dx/Dy
             return p
+            # return p,interp2D_str(self._profiles[j-1,i-1].valueType(z),
+            #                       self._profiles[j,i-1].valueType(z),
+            #                       self._profiles[j-1,i].valueType(z),
+            #                       self._profiles[j,i].valueType(z),dx,dy,Dx,Dy)
         except AttributeError:
             return np.nan*np.ones(z.shape)
 
@@ -1147,7 +1165,7 @@ class Model3D(object):
             x = np.linspace(lon1,lon2,301)
         XX,YY = np.meshgrid(x,y)
         return XX,YY,z
-    def plotSection(self,lon1,lat1,lon2,lat2,vmin=4.1,vmax=4.4,cmap=cvcpt,shading='gouraud'):
+    def plotSection(self,lon1,lat1,lon2,lat2,vmin=4.1,vmax=4.4,cmap=cvcpt,maxD=200,shading='gouraud'):
         XX,YY,Z = self.section(lon1,lat1,lon2,lat2)
         plt.figure(figsize=[8,4.8])
         # f = interpolate.interp2d(XX[0,:],YY[:,0],Z,kind='cubic')
@@ -1156,7 +1174,7 @@ class Model3D(object):
         # newZ = f(newX,newY)
         # XX,YY = np.meshgrid(newX,newY)
         plt.pcolormesh(XX,YY,Z,shading=shading,cmap=cmap,vmin=vmin,vmax=vmax)
-        plt.ylim(20,200)
+        plt.ylim(0,maxD)
         plt.colorbar(orientation='horizontal',fraction=0.1,aspect=50,pad=0.08)
         plt.gca().invert_yaxis()
     def plotMapView(self,mapTerm,loc='Cascadia',minlon=None,maxlon=None,minlat=None,maxlat=None,

@@ -11,7 +11,7 @@ from Triforce.customPlot import cvcpt,rbcpt
 import sys; sys.path.append('../')
 import pySurfInv.fast_surf as fast_surf
 
-def plotLayer(h,v,axes=None,fig=None,label=None,**kwargs):
+def plotLayer(h,v,axes=None,label=None,**kwargs):
     if axes is None:
         plt.figure(figsize=[5,7])
         axes = plt.axes()

@@ -11,17 +11,18 @@ from Triforce.customPlot import cvcpt,rbcpt
 import sys; sys.path.append('../')
 import pySurfInv.fast_surf as fast_surf
 
-def plotLayer(h,v,fig=None,label=None,**kwargs):
-    if fig is None:
-        fig = plt.figure(figsize=[5,7])
+def plotLayer(h,v,axes=None,fig=None,label=None,**kwargs):
+    if axes is None:
+        plt.figure(figsize=[5,7])
+        axes = plt.axes()
     else:
-        plt.figure(fig.number)
+        plt.axes(axes)
     hNew = np.insert(np.repeat(np.cumsum(h),2)[:-1],0,0)
     vNew = np.repeat(v,2)
-    plt.plot(vNew,hNew,label=label,**kwargs)
-    if not fig.axes[0].yaxis_inverted():
-        fig.axes[0].invert_yaxis()
-    return fig
+    axes.plot(vNew,hNew,label=label,**kwargs)
+    if not axes.yaxis_inverted():
+        axes.invert_yaxis()
+    return axes
 def plotGrid(zdepth,v,fig=None,label=None,**kwargs):
     if fig is None:
         fig = plt.figure(figsize=[5,7])
@@ -567,7 +568,10 @@ class Model1D(object):
             return False
         # negative velocity gradient below moho for ocean
 
-        if 'noNegSlopeBelowCrust' in self.info.keys() and self.info['noNegSlopeBelowCrust'] is True:
+        if 'NegSlopeBelowCrust' in self.info.keys() and self.info['NegSlopeBelowCrust'] is False:
+            pass
+        elif 'noNegSlopeBelowCrust' in self.info.keys() and self.info['noNegSlopeBelowCrust'] is False: 
+            #deprecated, just for compatibility 
             pass
         elif not vsMantle[1]<vsMantle[0]:
             return False

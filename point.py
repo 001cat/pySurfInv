@@ -5,7 +5,7 @@ from copy import deepcopy
 from scipy import interpolate
 from geographiclib.geodesic import Geodesic
 from Triforce.pltHead import *
-from Triforce.utils import savetxt
+from Triforce.utils import GeoMap, savetxt
 from Triforce.obspyPlus import randString
 from Triforce.customPlot import cvcpt,rbcpt
 import sys; sys.path.append('../')
@@ -521,6 +521,12 @@ class Model1D(object):
             tmp[5,typeLst=='crust'] = qpCrust
             tmp[4,typeLst=='mantle'] = qsMantle[:]
             tmp[5,typeLst=='mantle'] = qpMantle[:]
+            try:
+                if self.info['specialHighQs'] is True:
+                    z1 = h[typeLst!='mantle'].sum()
+                    tmp[4,(typeLst=='mantle') * (deps<z1+40)] = 5000
+            except:
+                pass
             return tmp
         else:
             return profile
@@ -570,7 +576,7 @@ class Model1D(object):
 
         if 'NegSlopeBelowCrust' in self.info.keys() and self.info['NegSlopeBelowCrust'] is False:
             pass
-        elif 'noNegSlopeBelowCrust' in self.info.keys() and self.info['noNegSlopeBelowCrust'] is False: 
+        elif 'noNegSlopeBelowCrust' in self.info.keys() and self.info['noNegSlopeBelowCrust'] is True: 
             #deprecated, just for compatibility 
             pass
         elif not vsMantle[1]<vsMantle[0]:
@@ -918,11 +924,37 @@ class ProfileGrid():
         # zdepth,vs,ltype = profileIn
         self.zdepth = np.array(profileIn[0])
         self.vs     = np.array(profileIn[1])
+        # self.layers = np.array(layers.copy())
+        # self.Hs     = np.array(Hs.copy())
+        # self.z0     = -max(topo,0)
         self.ltype  = np.array(profileIn[2])
+    def _type(self,z):
+        tmp = np.where(self.zdepth >= z)
+        if len(tmp) == 0:
+            raise ValueError()
+        return self.ltype[tmp[0][0]]
     def value(self,z):
         return np.interp(z,self.zdepth,self.vs,left=np.nan,right=np.nan)
-    # def valueType(self,z):
-    #     return self.ltype[np.abs(self.zdepth-z).argmin()]
+    def type(self,z):
+        try:
+            return np.array([self._type(i) for i in z])
+        except:
+            return self._type(z)
+    def resample(self,layerDict):
+        Z,Vs = [],[]
+        for l,n in layerDict.items():
+            if l not in self.ltype:
+                Z.extend([np.nan for _ in range(n)])
+                Vs.extend([np.nan for _ in range(n)])
+                continue
+            z1,vs1 = self.zdepth[self.ltype==l],self.vs[self.ltype==l]
+            z2 = np.linspace(z1[0],z1[-1],n)
+            vs2 = np.interp(z2,z1,vs1)
+            Z.extend(z2);Vs.extend(vs2)
+        return np.array(Z),np.array(Vs)
+    def moho(self):
+        return self.zdepth[np.where(self.ltype == 'crust')[0][-1]]
+
 
 def mapSmooth(lons,lats,z,tension=0.0, width=50.):
     lons = lons.round(decimals=4)
@@ -1004,18 +1036,8 @@ class Model3D(object):
                                'pvelo':postpoint.obs['c'],
                                'pvelp':postpoint.avgMod.forward(postpoint.obs['T']),
                                'uncer':postpoint.obs['uncer']}
-    def profile(self,z,lat,lon):
-        # def interp2D_str(str0,str1,str2,str3,dx,dy,Dx,Dy):
-        #     d = {}
-        #     w0 = (Dx-dx)/Dx+(Dy-dy)/Dy
-        #     w1 = dx/Dx+(Dy-dy)/Dy
-        #     w2 = (Dx-dx)/Dx+dy/Dy
-        #     w3 = dx/Dx+dy/Dy
-        #     for s,w in zip([str0,str1,str2,str3],[w0,w1,w2,w3]):
-        #         d[s] = w if s not in d.keys() else w+d[s]
-        #     return max(d, key=d.get)
-            
 
+    def vsProfile(self,z,lat,lon):
         lon = lon + 360*(lon < 0)
         if (lon-self.lons[0]) * (lon-self.lons[-1]) > 0:
             # raise ValueError('Longitude is out of range!')
@@ -1023,7 +1045,6 @@ class Model3D(object):
         if (lat-self.lats[0]) * (lat-self.lats[-1]) > 0:
             # raise ValueError('Latitude is out of range!')
             return np.nan
-
         i = np.where(self.lons-lon>=0)[0][0]
         j = np.where(self.lats-lat>=0)[0][0]
         try:
@@ -1037,14 +1058,86 @@ class Model3D(object):
             dy = lat - self.lats[j-1]
             p = p0+(p1-p0)*dy/Dy+(p2-p0)*dx/Dx+(p0+p3-p1-p2)*dx*dy/Dx/Dy
             return p
-            # return p,interp2D_str(self._profiles[j-1,i-1].valueType(z),
-            #                       self._profiles[j,i-1].valueType(z),
-            #                       self._profiles[j-1,i].valueType(z),
-            #                       self._profiles[j,i].valueType(z),dx,dy,Dx,Dy)
         except AttributeError:
             return np.nan*np.ones(z.shape)
+    def topo(self,lat,lon):
+        lon = lon + 360*(lon < 0)
+        if (lon-self.lons[0]) * (lon-self.lons[-1]) > 0:
+            # raise ValueError('Longitude is out of range!')
+            return np.nan
+        if (lat-self.lats[0]) * (lat-self.lats[-1]) > 0:
+            # raise ValueError('Latitude is out of range!')
+            return np.nan
+        i = np.where(self.lons-lon>=0)[0][0]
+        j = np.where(self.lats-lat>=0)[0][0]
+        try:
+            p0 = self.mods[j-1,i-1].info['topo']
+            p1 = self.mods[j,i-1].info['topo']
+            p2 = self.mods[j-1,i].info['topo']
+            p3 = self.mods[j,i].info['topo']
+            Dx = self.lons[i] - self.lons[i-1]
+            Dy = self.lats[j] - self.lats[j-1]
+            dx = lon - self.lons[i-1]
+            dy = lat - self.lats[j-1]
+            p = p0+(p1-p0)*dy/Dy+(p2-p0)*dx/Dx+(p0+p3-p1-p2)*dx*dy/Dx/Dy
+            return p
+        except AttributeError:
+            return np.nan
+    def moho(self,lat,lon):
+        lon = lon + 360*(lon < 0)
+        if (lon-self.lons[0]) * (lon-self.lons[-1]) > 0:
+            # raise ValueError('Longitude is out of range!')
+            return np.nan
+        if (lat-self.lats[0]) * (lat-self.lats[-1]) > 0:
+            # raise ValueError('Latitude is out of range!')
+            return np.nan
+        i = np.where(self.lons-lon>=0)[0][0]
+        j = np.where(self.lats-lat>=0)[0][0]
+        try:
+            p0 = self._profiles[j-1,i-1].moho()
+            p1 = self._profiles[j,i-1].moho()
+            p2 = self._profiles[j-1,i].moho()
+            p3 = self._profiles[j,i].moho()
+            Dx = self.lons[i] - self.lons[i-1]
+            Dy = self.lats[j] - self.lats[j-1]
+            dx = lon - self.lons[i-1]
+            dy = lat - self.lats[j-1]
+            p = p0+(p1-p0)*dy/Dy+(p2-p0)*dx/Dx+(p0+p3-p1-p2)*dx*dy/Dx/Dy
+            return p
+        except AttributeError:
+            return np.nan
 
     def smoothGrid(self,width=50):
+        ''' To combine and smooth areas with different model settings '''
+        m,n = len(self.lats),len(self.lons)
+        layerDict = {'water':2,'sediment':6,'crust':30,'mantle':200}
+        ltypes = []
+        for k,v in layerDict.items():
+            ltypes.extend([k]*v)
+        l = np.sum(list(layerDict.values()))
+        zMat = np.zeros((m,n,l))
+        vsMat = np.zeros((m,n,l))
+        for i in range(m):
+            for j in range(n):
+                if not self.mask[i,j]:
+                    z,vs = self._profiles[i][j].resample(layerDict)
+                else:
+                    z,vs = np.nan,np.nan
+                zMat[i,j,:] = z
+                vsMat[i,j,:] = vs
+        zMatSmooth = zMat.copy()
+        vsMatSmooth = vsMat.copy()
+        print('smoothing')
+        for k in range(l):
+            print(f'{k+1}/{l}')
+            zMatSmooth[:,:,k] = mapSmooth(self.lons,self.lats,zMat[:,:,k],width=width)
+            vsMatSmooth[:,:,k] = mapSmooth(self.lons,self.lats,vsMat[:,:,k],width=width)
+        for i in range(m):
+            for j in range(n):
+                if not self.mask[i,j]:
+                    self._profiles[i][j] = ProfileGrid((zMatSmooth[i,j,:],vsMatSmooth[i,j,:],
+                                                        ltypes))
+    def smoothGrid_OLD(self,width=50):
         ''' To combine and smooth areas with different model settings '''
         def updateArray(a,b):
             if len(set(a)) != len(a) or len(set(b)) != len(b):
@@ -1108,8 +1201,6 @@ class Model3D(object):
                 if not self.mask[i,j]:
                     self._profiles[i][j] = ProfileGrid((zMatSmooth[:,i,j],vsMatSmooth[:,i,j],
                                                         ltypeSmooth))
-
-
     def smooth(self,width=50):
         m,n = len(self.lats),len(self.lons)
         paras = [ [None]*n for _ in range(m)]
@@ -1130,7 +1221,6 @@ class Model3D(object):
                     self.mods[i][j].updateVars(paras[i][j])
                     self._profiles[i][j] = ProfileGrid(self.mods[i][j].genProfileGrid())
 
-
     def write(self,fname):
         np.savez_compressed(fname,lons=self.lons,lats=self.lats,profiles=self._profiles,
                             misfits=self.misfits,disps=self.disps,mods=self.mods)
@@ -1142,6 +1232,7 @@ class Model3D(object):
         self.misfits    = tmp['misfits'][()]
         self.disps      = tmp['disps'][()]
         self.mods       = tmp['mods'][()]
+
     def mapview(self,depth):
         mask = self.mask
         vsMap = np.ma.masked_array(np.zeros(mask.shape),mask=mask)
@@ -1158,19 +1249,23 @@ class Model3D(object):
         x = np.linspace(0,geoDict['s12'],301)/1000
         y = np.linspace(0,200-0.01,201)
         z = np.zeros((len(y),len(x)))
+        moho = np.zeros(len(x))
+        topo = np.zeros(len(x))
         for i,d in enumerate(x*1000):
             tmp = Geodesic.WGS84.Direct(lat1,lon1,geoDict['azi1'],d)
             # lats.append(tmp['lat2']);lons.append(tmp['lon2'])
-            z[:,i] = self.profile(y,tmp['lat2'],tmp['lon2'])
+            z[:,i] = self.vsProfile(y,tmp['lat2'],tmp['lon2'])
+            moho[i]= self.moho(tmp['lat2'],tmp['lon2'])
+            topo[i]= self.topo(tmp['lat2'],tmp['lon2'])
         z = np.ma.masked_array(z,np.isnan(z))
         if abs(lon1-lon2)<0.01:
             x = np.linspace(lat1,lat2,301)
         elif abs(lat1-lat2)<0.01:
             x = np.linspace(lon1,lon2,301)
         XX,YY = np.meshgrid(x,y)
-        return XX,YY,z
-    def plotSection(self,lon1,lat1,lon2,lat2,vmin=4.1,vmax=4.4,cmap=cvcpt,maxD=200,shading='gouraud'):
-        XX,YY,Z = self.section(lon1,lat1,lon2,lat2)
+        return XX,YY,z,moho,topo
+    def plotSection_OLD(self,lon1,lat1,lon2,lat2,vmin=4.1,vmax=4.4,cmap=cvcpt,maxD=200,shading='gouraud'):
+        XX,YY,Z,moho = self.section(lon1,lat1,lon2,lat2)
         plt.figure(figsize=[8,4.8])
         # f = interpolate.interp2d(XX[0,:],YY[:,0],Z,kind='cubic')
         # newX = np.linspace(XX[0,0],XX[0,-1],300)
@@ -1178,9 +1273,40 @@ class Model3D(object):
         # newZ = f(newX,newY)
         # XX,YY = np.meshgrid(newX,newY)
         plt.pcolormesh(XX,YY,Z,shading=shading,cmap=cmap,vmin=vmin,vmax=vmax)
+        plt.plot(XX[0,:],moho,'k',lw=4)
         plt.ylim(0,maxD)
         plt.colorbar(orientation='horizontal',fraction=0.1,aspect=50,pad=0.08)
         plt.gca().invert_yaxis()
+
+    def plotSection(self,lon1,lat1,lon2,lat2,vCrust=[3.0,4.0],vMantle=[4.0,4.5],cmap=cvcpt,
+                    maxD=200,shading='gouraud',title=None):
+        from Triforce.customPlot import addAxes,addCAxes
+        XX,YY,Z,moho,topo = self.section(lon1,lat1,lon2,lat2)
+        mask = ~(YY <= np.tile(moho,(YY.shape[0],1)))
+        Z_crust = np.ma.masked_array(Z,mask=mask)
+        fig = plt.figure(figsize=[12,5])
+        ax2 = addAxes([0,0.18,1,0.65])
+        bbox = ax2.get_position()
+        x,y,w,h = bbox.x0,bbox.y0,bbox.width,bbox.height
+        ax1 = plt.axes([x,y+h+0.05*h,w,h/6],sharex=ax2)
+        ax1.axes.xaxis.set_visible(False)
+        cax1 = addCAxes(ax2,location='bottom',size=0.05,pad=0.06)
+        cax2 = addCAxes(ax2,location='bottom',size=0.05,pad=0.16)
+
+        ax1.plot(XX[0,:], topo*1000., 'k', lw=3)
+        ax1.fill_between(XX[0,:], 0, topo*1000., facecolor='grey')
+        ax1.set_ylim(0, np.nanmax(topo)*1000.+100.)
+        ax1.set_title(title)
+
+        plt.axes(ax2)
+        plt.pcolormesh(XX,YY,Z,shading=shading,cmap=cmap,vmin=vMantle[0],vmax=vMantle[1])
+        plt.colorbar(cax=cax2,orientation='horizontal')
+        plt.pcolormesh(XX,YY,Z_crust,shading=shading,cmap=cmap,vmin=vCrust[0],vmax=vCrust[1])
+        plt.colorbar(cax=cax1,orientation='horizontal')
+        plt.plot(XX[0,:],moho,'k',lw=4)
+        plt.ylim(0,maxD)
+        plt.gca().invert_yaxis()
+
     def plotMapView(self,mapTerm,loc='Cascadia',minlon=None,maxlon=None,minlat=None,maxlat=None,
                     dlat=None,dlon=None,vmin=4.1,vmax=4.4,cmap=None):
         from Triforce.customPlot import plotLocalBase
@@ -1265,6 +1391,10 @@ if __name__ == '__main__':
     fig = postp.plotVsProfileGrid()
     mod2.plotProfileGrid(fig=fig,label='True')
     postp.plotDistrib()
+    # timeStamp = time.time()
+    # for _ in range(10000):
+    #     postp.avgMod.forward(periods)
+    # print(f'{time.time()-timeStamp:.3f}s')
 
     # inversion test real data
     # id     = '233.0_43.2'

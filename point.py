@@ -702,6 +702,7 @@ class Point(object):
                     plt.plot(T,mod1.forward(periods=T))
                 if priori:
                     mod1.write(i,mcTrack,[0,1,1])
+                    mod0 = mod1
                     continue
                 misfit1,L1 = self.misfit(mod1)
                 if accept(L0,L1):
@@ -980,7 +981,8 @@ class Model3D(object):
         self.lons = np.array(lons)
         self.lats = np.array(lats)
         self.mods       = [ [None]*len(lons) for _ in range(len(lats))]
-        self._profiles   = [ [None]*len(lons) for _ in range(len(lats))]
+        self._mods_init = [ [None]*len(lons) for _ in range(len(lats))]
+        self._profiles  = [ [None]*len(lons) for _ in range(len(lats))]
         self.misfits    = [ [None]*len(lons) for _ in range(len(lats))]
         self.disps      = [ [None]*len(lons) for _ in range(len(lats))]
     @property
@@ -1030,6 +1032,7 @@ class Model3D(object):
         print(f'Add point {lon:.1f}_{lat:.1f}')
         i,j = self._findInd(lon,lat)
         self.mods[i][j]     = postpoint.avgMod.copy()
+        self._mods_init[i][j] = postpoint.initMod.copy()
         self._profiles[i][j] = ProfileGrid(postpoint.avgMod.genProfileGrid())
         self.misfits[i][j]  = postpoint.avgMod.misfit
         self.disps[i][j]    = {'T':postpoint.obs['T'],
@@ -1223,15 +1226,17 @@ class Model3D(object):
 
     def write(self,fname):
         np.savez_compressed(fname,lons=self.lons,lats=self.lats,profiles=self._profiles,
-                            misfits=self.misfits,disps=self.disps,mods=self.mods)
+                            misfits=self.misfits,disps=self.disps,
+                            mods=self.mods,modsInit=self._mods_init)
     def load(self,fname):
         tmp = np.load(fname,allow_pickle=True)
         self.lons = tmp['lons'][()]
         self.lats = tmp['lats'][()]
-        self._profiles   = tmp['profiles'][()]
+        self._profiles  = tmp['profiles'][()]
         self.misfits    = tmp['misfits'][()]
         self.disps      = tmp['disps'][()]
         self.mods       = tmp['mods'][()]
+        self._mods_init = tmp['modsInit'][()]
 
     def mapview(self,depth):
         mask = self.mask
@@ -1293,9 +1298,19 @@ class Model3D(object):
         cax1 = addCAxes(ax2,location='bottom',size=0.05,pad=0.06)
         cax2 = addCAxes(ax2,location='bottom',size=0.05,pad=0.16)
 
-        ax1.plot(XX[0,:], topo*1000., 'k', lw=3)
-        ax1.fill_between(XX[0,:], 0, topo*1000., facecolor='grey')
-        ax1.set_ylim(0, np.nanmax(topo)*1000.+100.)
+        topo_plot = topo.copy()
+        topo_plot[topo_plot<0] /= 2
+        topo_min,topo_max = np.nanmin(topo)*1000,np.nanmax(topo)*1000
+        ax1.plot(XX[0,:], topo_plot*1000., 'k', lw=3)
+        ax1.fill_between(XX[0,:], -10000, topo_plot*1000., facecolor='grey')
+        ax1.fill_between(XX[0,:], 0, topo_plot*1000., where=topo_plot<0, facecolor='#d4f1f9')
+        ax1.set_yticks([-2000/2,0,1000])
+        ax1.set_yticklabels(['-2000','0','1000'])
+        ax1.set_ylim(np.nanmin(topo_plot)*1000-100, np.nanmax(topo_plot)*1000.+300.)
+        # ax1.plot(XX[0,:],np.zeros(XX.shape[1]),'--k',lw=0.5)
+        
+        
+
         ax1.set_title(title)
 
         plt.axes(ax2)
@@ -1306,6 +1321,8 @@ class Model3D(object):
         plt.plot(XX[0,:],moho,'k',lw=4)
         plt.ylim(0,maxD)
         plt.gca().invert_yaxis()
+
+        return fig,ax1,ax2
 
     def plotMapView(self,mapTerm,loc='Cascadia',minlon=None,maxlon=None,minlat=None,maxlat=None,
                     dlat=None,dlon=None,vmin=4.1,vmax=4.4,cmap=None):
@@ -1325,16 +1342,16 @@ class Model3D(object):
             norm = mpl.colors.BoundaryNorm(np.linspace(0.5,3,6), cmap.N)
             misfits = np.array(self.misfits)
             misfits[misfits==None] = np.nan
-            misfits = np.ma.masked_array(misfits,mask=self.mask,fill_value=0)
-            misfits -= 0.10
-            m.pcolormesh(self.XX,self.YY,misfits,shading='gouraud',cmap=cmap,latlon=True,norm=norm)
+            misfits = np.ma.masked_array(misfits.astype(float),mask=self.mask,fill_value=0)
+            # misfits -= 0.10
+            m.pcolormesh(self.XX-360*(self.XX[0,0]>180),self.YY,misfits,shading='gouraud',cmap=cmap,latlon=True,norm=norm)
             plt.title(f'Misfit')
             plt.colorbar(location='bottom',fraction=0.012,aspect=50)
         else:
             if cmap is None:
                 cmap = cvcpt
             vsMap = self.mapview(mapTerm)
-            m.pcolormesh(self.XX,self.YY,vsMap,shading='gouraud',cmap=cmap,vmin=vmin,vmax=vmax,latlon=True)
+            m.pcolormesh(self.XX-360*(self.XX[0,0]>180),self.YY,vsMap,shading='gouraud',cmap=cmap,vmin=vmin,vmax=vmax,latlon=True)
             plt.title(f'Depth: {mapTerm} km')
             plt.colorbar(location='bottom',fraction=0.012,aspect=50)
         return fig,m
@@ -1381,7 +1398,9 @@ if __name__ == '__main__':
     periods = np.array([10,12,14,16,18,20,24,28,32,36,40,50,60,70,80])
     setting = Setting(); setting.load('setting-Hongda.yml'); setting.updateInfo(topo=-4,sedthk=0.6)
     mod1 = Model1D(); mod1.loadSetting(setting); mod2 = mod1.reset('uniform') # set true model
-    setting._updateVars((np.array(mod1.paras())+np.array(mod2.paras()))/2) # setting init model
+    mod2 = mod1.copy()
+    for _ in range(20):
+        mod2 = mod2.perturb()
     p = Point(setting,topo=-4,sedthk=0.6,
               periods=periods,vels=mod2.forward(periods),uncers=[0.01]*len(periods))
     p.MCinvMP(runN=50000,step4uwalk=1000,nprocess=26)

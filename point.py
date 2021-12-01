@@ -138,6 +138,7 @@ def dictL2R(dIn):
     else:
         dOut = deepcopy(dIn)
     return dOut
+
 class Setting(dict):
     ''' Parameter setting to construct Model1D '''
     def load(self,setting):
@@ -176,21 +177,21 @@ class Setting(dict):
             self._updateCrust(crsthk)
         if lithoAge is not None:
             self.info['lithoAge'] = lithoAge
-    def _updateVars(self,newParas):  #for test only
-        i = 0
-        for ltype in self.keys():
-            if ltype == 'Info':
-                continue
-            for k in self[ltype].keys():
-                if type(self[ltype][k]) is str:
-                    continue
-                if type(self[ltype][k][0]) is list:
-                    for j in range(len(self[ltype][k])):
-                        if self[ltype][k][j][1] in ('abs','rel'):
-                            self[ltype][k][j][0] = newParas[i];i+=1
-                else:
-                    if self[ltype][k][1] in ('abs','rel'): 
-                        self[ltype][k][0] = newParas[i];i+=1
+    # def _updateVars(self,newParas):  #for test only
+    #     i = 0
+    #     for ltype in self.keys():
+    #         if ltype == 'Info':
+    #             continue
+    #         for k in self[ltype].keys():
+    #             if type(self[ltype][k]) is str:
+    #                 continue
+    #             if type(self[ltype][k][0]) is list:
+    #                 for j in range(len(self[ltype][k])):
+    #                     if self[ltype][k][j][1] in ('abs','rel'):
+    #                         self[ltype][k][j][0] = newParas[i];i+=1
+    #             else:
+    #                 if self[ltype][k][1] in ('abs','rel'): 
+    #                     self[ltype][k][0] = newParas[i];i+=1
     def copy(self):
         return deepcopy(self)
 
@@ -234,15 +235,23 @@ class SurfLayer(object):
         self.type,self.mtype = layerType,settingDict['mtype']
         self.stype = '' if 'stype' not in settingDict.keys() else settingDict['stype']
         self.paraDict = {}
-        self.paraDict['h'] = dictL2R(settingDict['h'])
         if self.mtype == 'water':
+            self.paraDict['h'] = dictL2R(settingDict['h'])
             self.paraDict['vp'] = dictL2R(settingDict['vp'])
+        elif self.mtype == 'grid':
+            self.paraDict['zdeps'] = np.array([RandVar(vs) for vs in settingDict['zdeps']])
+            self.paraDict['vs'] = np.array([RandVar(vs) for vs in settingDict['vs']])
+            self.paraDict['vpvs'] = dictL2R(settingDict['vpvs'])
         else:
+            self.paraDict['h'] = dictL2R(settingDict['h'])
             self.paraDict['vs'] = dictL2R(settingDict['vs'])
             self.paraDict['vpvs'] = dictL2R(settingDict['vpvs'])
     @property
     def H(self):
-        return self.paraDict['h']
+        if self.mtype == 'grid':
+            return self.paraDict['zdeps'][-1] - self.paraDict['zdeps'][0]
+        else:
+            return self.paraDict['h']
     @property
     def vs(self):
         return self.paraDict['vs']
@@ -271,6 +280,8 @@ class SurfLayer(object):
                 nFine = 10
             else:
                 nFine = 5
+        elif self.mtype == 'grid':
+            nFine = len(self.paraDict['zdeps'])-1
         return nFine
     @property
     def nRandVar(self):
@@ -317,8 +328,15 @@ class SurfLayer(object):
             nBasis = len(self.vs)
             deg = 3 + (nBasis>=4)
             return self.bspl(z,nBasis,deg) * self.vs
+        elif self.mtype == 'grid':
+            return self.paraDict['vs']
+        else:
+            raise ValueError('Not supported mtype.')
     def _hProfile(self):
-        return np.array([self.H/self.nFine]*self.nFine)
+        if self.mtype == 'grid':
+            return self.paraDict['zdeps'][1:]-self.paraDict['zdeps'][:-1]
+        else:
+            return np.array([self.H/self.nFine]*self.nFine)
     def _vsProfile(self):
         vsGrid = self._vsProfileGrid()
         return (vsGrid[:-1]+vsGrid[1:])/2
@@ -336,6 +354,8 @@ class SurfLayer(object):
             deg = 3 + (nBasis>=4)
             tmp = self.bspl(z,nBasis,deg) * self.vs
             return tmp
+        else:
+            raise ValueError('Not supported mtype.')
     def genProfile(self):
         vs = self._vsProfile()
         h  = self._hProfile()
@@ -456,11 +476,12 @@ class Model1D(object):
     def loadSetting(self,settingYML):
         setting = Setting(); setting.load(settingYML)
         self.info = setting['Info']; setting.pop('Info')
-        if list(setting.values())[-1]['h'][1] == 'total':
-            Hs = [setting[ltype]['h'][0] for ltype in setting.keys()]
-            setting[list(setting.keys())[-1]]['h'] = [Hs[-1]+self.altitudeH-np.sum(Hs[:-1]),'total']
-        else:
-            raise ValueError('Thickness of last layer should be labeled as total!')
+        if list(setting.values())[-1]['mtype'] != 'grid':
+            if list(setting.values())[-1]['h'][1] == 'total':
+                Hs = [setting[ltype]['h'][0] for ltype in setting.keys()]
+                setting[list(setting.keys())[-1]]['h'] = [Hs[-1]+self.altitudeH-np.sum(Hs[:-1]),'total']
+            else:
+                raise ValueError('Thickness of last layer should be labeled as total!')
         self.layers = [SurfLayer(ltype,setting[ltype]) for ltype in setting.keys()]
     def toSetting(self):
         z0 = 0 if 'topo' not in self.info.keys() else max(0,self.info['topo'])
@@ -605,6 +626,11 @@ class Model1D(object):
             osci = abs(np.diff(vsMantle[indLoc]))
             if len(np.where(osci > osciLim)[0]) >= 1:   # origin >= 1
                 return False
+
+        # temporary only
+        # if vsMantle[-1] - vsMantle[-2] < 0:
+        #     return False
+
         return True
     def plotProfile(self,type='vs',**kwargs):
         h,vs,vp,rho,qs,qp = self.genProfile()
@@ -873,33 +899,53 @@ class PostPoint(Point):
             plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)),
                         fill=False,ec='k',rwidth=1.0)
             plt.title(f'N = {self.accFinal.sum()}/{len(self.accFinal)}')
-    def plotVsProfile(self):
+    def plotVsProfile(self,allAccepted=False):
         fig = self.initMod.plotProfile(label='Initial')
         mod = self.avgMod.copy()
         indFinAcc = np.where(self.accFinal)[0]
-        for _ in range(min(len(indFinAcc),500)):
-            i = random.choice(indFinAcc)
-            mod.updateVars(self.MCparas[i,:])
+        for i in range(min(len(indFinAcc),(self.N if allAccepted else 2000))):
+            ind = indFinAcc[i] if allAccepted else random.choice(indFinAcc)
+            mod.updateVars(self.MCparas[ind,:])
             mod.plotProfile(fig=fig,color='grey',lw=0.1)
         self.avgMod.plotProfile(fig=fig,label='Avg')
         self.minMod.plotProfile(fig=fig,label='Min')
         plt.xlim(3.8,4.8)
         plt.legend()
         return fig
-    def plotVsProfileGrid(self):
+    def plotVsProfileGrid(self,allAccepted=False):
         fig = self.initMod.plotProfileGrid(label='Initial')
         fig.set_figheight(8.4);fig.set_figwidth(5)
         mod = self.avgMod.copy()
         indFinAcc = np.where(self.accFinal)[0]
-        for _ in range(min(len(indFinAcc),1000)):
-            i = random.choice(indFinAcc)
-            mod.updateVars(self.MCparas[i,:])
+        for i in range(min(len(indFinAcc),(self.N if allAccepted else 2000))):
+            ind = indFinAcc[i] if allAccepted else random.choice(indFinAcc)
+            mod.updateVars(self.MCparas[ind,:])
             mod.plotProfileGrid(fig=fig,color='grey',lw=0.1)
         self.avgMod.plotProfileGrid(fig=fig,label='Avg')
         self.minMod.plotProfileGrid(fig=fig,label='Min')
         plt.xlim(3.0,4.8)
         plt.legend()
         return fig
+    def plotVsProfileStd(self):
+        indFinAcc = np.where(self.accFinal)[0]
+        zdeps = np.linspace(0,199,300)
+        allVs = np.zeros([len(zdeps),len(indFinAcc)])
+
+        mod = self.avgMod.copy()
+        for i,ind in enumerate(indFinAcc):
+            mod.updateVars(self.MCparas[ind,:])
+            profile = ProfileGrid(mod.genProfileGrid())
+            allVs[:,i] = profile.value(zdeps)
+        std = allVs.std(axis=1)
+
+        fig = self.initMod.plotProfileGrid(label='Initial',alpha=0.1)
+        fig.set_figheight(8.4);fig.set_figwidth(5)
+        avgProfile = ProfileGrid(self.avgMod.genProfileGrid()).value(zdeps)
+        plt.fill_betweenx(zdeps,avgProfile+std,avgProfile-std,facecolor='grey',alpha=0.4)
+        self.avgMod.plotProfileGrid(fig=fig,label='Avg')
+        # self.minMod.plotProfileGrid(fig=fig,label='Min')
+        plt.xlim(3.0,4.8)
+        plt.legend()
     def plotCheck(self):
         plt.figure()
         ksquare = self.misfits**2*len(self.obs['T'])

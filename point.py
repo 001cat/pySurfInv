@@ -23,14 +23,19 @@ def plotLayer(h,v,axes=None,label=None,**kwargs):
     if not axes.yaxis_inverted():
         axes.invert_yaxis()
     return axes
-def plotGrid(zdepth,v,fig=None,label=None,**kwargs):
-    if fig is None:
-        fig = plt.figure(figsize=[5,7])
+def plotGrid(zdepth,v,fig=None,ax=None,label=None,**kwargs):
+    if ax is None:
+        if fig is None:
+            fig = plt.figure(figsize=[5,7])
+        else:
+            plt.figure(fig.number)
     else:
-        plt.figure(fig.number)
+        plt.axes(ax)
+        fig = plt.gcf()
     plt.plot(v,zdepth,label=label,**kwargs)
-    if not fig.axes[0].yaxis_inverted():
-        fig.axes[0].invert_yaxis()
+    ax = ax or fig.axes[0]
+    if not ax.yaxis_inverted():
+        ax.invert_yaxis()
     return fig
 def monoIncrease(a,eps=np.finfo(float).eps):
     return np.all(np.diff(a)>=0)
@@ -639,10 +644,10 @@ class Model1D(object):
         else:
             print('To be added...')
         return fig
-    def plotProfileGrid(self,type='vs',**kwargs):
+    def plotProfileGrid(self,type='vs',ax=None,**kwargs):
         zdepth,vs,ltype = self.genProfileGrid()
         if type == 'vs':
-            fig = plotGrid(zdepth,vs,**kwargs);plt.title('Vs')
+            fig = plotGrid(zdepth,vs,ax=ax,**kwargs);plt.title('Vs')
         else:
             print('To be added...')
         return fig
@@ -870,10 +875,13 @@ class PostPoint(Point):
             invdata    = inarr['arr_0']
             paraval       = invdata[:,2:11]
             self.Priparas = paraval[:,colOrder]
-    def plotDisp(self):
+    def plotDisp(self,ax=None):
         T,vel,uncer = self.obs['T'],self.obs['c'],\
                       self.obs['uncer']
-        plt.figure()
+        if ax is None:
+            plt.figure()
+        else:
+            plt.axes(ax)
         mod = self.avgMod.copy()
         indFinAcc = np.where(self.accFinal)[0]
         for _ in range(min(len(indFinAcc),500)):
@@ -912,17 +920,18 @@ class PostPoint(Point):
         plt.xlim(3.8,4.8)
         plt.legend()
         return fig
-    def plotVsProfileGrid(self,allAccepted=False):
-        fig = self.initMod.plotProfileGrid(label='Initial')
-        fig.set_figheight(8.4);fig.set_figwidth(5)
+    def plotVsProfileGrid(self,allAccepted=False,ax=None):
+        fig = self.initMod.plotProfileGrid(label='Initial',ax=ax)
+        if ax is None:
+            fig.set_figheight(8.4);fig.set_figwidth(5)
         mod = self.avgMod.copy()
         indFinAcc = np.where(self.accFinal)[0]
         for i in range(min(len(indFinAcc),(self.N if allAccepted else 2000))):
             ind = indFinAcc[i] if allAccepted else random.choice(indFinAcc)
             mod.updateVars(self.MCparas[ind,:])
-            mod.plotProfileGrid(fig=fig,color='grey',lw=0.1)
-        self.avgMod.plotProfileGrid(fig=fig,label='Avg')
-        self.minMod.plotProfileGrid(fig=fig,label='Min')
+            mod.plotProfileGrid(fig=fig,color='grey',ax=ax,lw=0.1)
+        self.avgMod.plotProfileGrid(fig=fig,label='Avg',ax=ax)
+        self.minMod.plotProfileGrid(fig=fig,label='Min',ax=ax)
         plt.xlim(3.0,4.8)
         plt.legend()
         return fig
@@ -1284,6 +1293,8 @@ class Model3D(object):
         self.mods       = tmp['mods'][()]
         self._mods_init = tmp['modsInit'][()]
 
+
+    ''' figure plotting '''
     def mapview(self,depth):
         mask = self.mask
         vsMap = np.ma.masked_array(np.zeros(mask.shape),mask=mask)
@@ -1370,8 +1381,7 @@ class Model3D(object):
 
         return fig,ax1,ax2
 
-    def plotMapView(self,mapTerm,loc='Cascadia',minlon=None,maxlon=None,minlat=None,maxlat=None,
-                    dlat=None,dlon=None,vmin=4.1,vmax=4.4,cmap=None):
+    def _plotBasemap(self,loc='Cascadia'):
         from Triforce.customPlot import plotLocalBase
         if loc=='Cascadia':
             minlon,maxlon,minlat,maxlat,dlon,dlat = -132,-121,39,50,2,3
@@ -1383,6 +1393,9 @@ class Model3D(object):
         fig,m = plotLocalBase(minlon,maxlon,minlat,maxlat,dlat=dlat,dlon=dlon,resolution='l')
         m.readshapefile('/home/ayu/Projects/Cascadia/Models/Plates/PB2002_boundaries','PB2002_boundaries',
             linewidth=2.0,color='orange')
+        return fig,m
+    def plotMapView(self,mapTerm,loc='Cascadia',vmin=4.1,vmax=4.4,cmap=None):
+        fig,m = self._plotBasemap(loc=loc)
         if mapTerm == 'misfit':
             cmap = plt.cm.gnuplot_r if cmap is None else cmap
             norm = mpl.colors.BoundaryNorm(np.linspace(0.5,3,6), cmap.N)
@@ -1401,6 +1414,96 @@ class Model3D(object):
             plt.title(f'Depth: {mapTerm} km')
             plt.colorbar(location='bottom',fraction=0.012,aspect=50)
         return fig,m
+
+    def checkLayerThick(self):
+        mask = self.mask
+        hCrust      =  np.ma.masked_array(np.zeros(mask.shape),mask=mask)
+        hCrust0     =  np.ma.masked_array(np.zeros(mask.shape),mask=mask)
+        hCrustBias  =  np.ma.masked_array(np.zeros(mask.shape),mask=mask)
+        hSed        =  np.ma.masked_array(np.zeros(mask.shape),mask=mask)
+        hSed0       =  np.ma.masked_array(np.zeros(mask.shape),mask=mask)
+        hSedBias    =  np.ma.masked_array(np.zeros(mask.shape),mask=mask)
+        m,n = len(self.lats),len(self.lons)
+        for i in range(m):
+            for j in range(n):
+                if not mask[i,j]:
+                    mod,mod0 = self.mods[i][j],self._mods_init[i][j]
+                    indCrust = [l.type for l in mod.layers].index('crust')
+                    indSed   = [l.type for l in mod.layers].index('sediment')
+                    hCrust[i,j]     = mod.layers[indCrust].H
+                    hCrust0[i,j]    = mod0.layers[indCrust].H
+                    hSed[i,j]       = mod.layers[indSed].H
+                    hSed0[i,j]      = mod0.layers[indSed].H
+                    hCrustBias[i,j] = (hCrust[i,j] - hCrust0[i,j])/(hCrust0[i,j])*100
+                    if mod.info['label'][:6] == 'Hongda' and hSed0[i,j]<1.0:
+                        hSedBias[i,j]   = (hSed[i,j]-hSed0[i,j])/1.0*100
+                    else:
+                        hSedBias[i,j]   = (hSed[i,j]-hSed0[i,j])/hSed0[i,j]*100
+
+        fig,m = self._plotBasemap(loc='auto')
+        m.pcolormesh(self.XX-360,self.YY,hCrust,shading='gouraud',cmap=cvcpt,latlon=True)
+        plt.title(f'Crust Thickness')
+        plt.colorbar(location='bottom',fraction=0.012,aspect=50)
+        plt.savefig('CrustH.png')
+
+        fig,m = self._plotBasemap(loc='auto')
+        m.pcolormesh(self.XX-360,self.YY,hCrustBias,shading='gouraud',cmap=cvcpt,latlon=True)
+        plt.title(f'Crust Thickness Difference from Initial Model (%)')
+        plt.colorbar(location='bottom',fraction=0.012,aspect=50)
+        plt.clim(-25,25)
+        plt.savefig('CrustH-Change.png')
+
+        fig,m = self._plotBasemap(loc='auto')
+        m.pcolormesh(self.XX-360,self.YY,hSed,shading='gouraud',cmap=cvcpt,latlon=True)
+        plt.title(f'Sediment Thickness')
+        plt.colorbar(location='bottom',fraction=0.012,aspect=50)
+        plt.savefig('SedimentH.png')
+
+        fig,m = self._plotBasemap(loc='auto')
+        m.pcolormesh(self.XX-360,self.YY,hSedBias,shading='gouraud',cmap=cvcpt,latlon=True)
+        plt.title(f'Sediment Thickness Difference from Initial Model (%)')
+        plt.colorbar(location='bottom',fraction=0.012,aspect=50)
+        plt.clim(-100,100)
+        plt.savefig('SedimentH-Change.png')
+    def checkPhaseVelocity(self,pers=[16,24,36]):
+        from Triforce.customPlot import plotLocalBase,addCAxes
+        vminmax = {'020s':(3.3,3.9),
+                '016s':(3.0,4.0),
+                '024s':(3.3,4.0),
+                '036s':(3.6,4.0),
+                '040s':(3.6,4.0),
+                '060s':(3.7,4.0),
+                '080s':(3.8,4.05)}
+        minlon,maxlon,minlat,maxlat = self.lons[0],self.lons[-1],self.lats[0],self.lats[-1]
+        dlat,dlon = (maxlat-minlat)//5,(maxlon-minlon)//3
+        fig, axes = plt.subplots(2,3,figsize=[12,8])
+        plt.subplots_adjust(wspace=0.25,hspace=0.3,left=0.08,right=0.92,bottom=0.15)
+        for iper,per in enumerate(pers):
+            # print(iper)
+            Tstr = f'{per:03d}s'
+            vmin,vmax = vminmax[Tstr] if Tstr in vminmax.keys() else (None,None)
+            m,n = self.XX.shape
+            pvelo = np.ma.masked_array(np.zeros(self.XX.shape),mask=self.mask)
+            pvelp = np.ma.masked_array(np.zeros(self.XX.shape),mask=self.mask)
+            for i in range(m):
+                for j in range(n):
+                    if self.mask[i,j]:
+                        continue
+                    disp = self.disps[i][j]
+                    ind = disp['T'].index(int(Tstr[:-1]))
+                    pvelo[i,j] = disp['pvelo'][ind]
+                    pvelp[i,j] = disp['pvelp'][ind]
+            _,m = plotLocalBase(minlon,maxlon,minlat,maxlat,dlat=dlat,dlon=dlon,resolution='l',ax=axes[0,iper])
+            m.pcolormesh(self.XX-360,self.YY,pvelo,latlon=True,cmap=cvcpt,shading='gouraud',vmin=vmin,vmax=vmax)
+            axes[0,iper].set_title(f'{Tstr} -- Observation')
+            _,m = plotLocalBase(minlon,maxlon,minlat,maxlat,dlat=dlat,dlon=dlon,resolution='l',ax=axes[1,iper])
+            m.pcolormesh(self.XX-360,self.YY,pvelp,latlon=True,cmap=cvcpt,shading='gouraud',vmin=vmin,vmax=vmax)
+            axes[1,iper].set_title(f'{Tstr} -- Prediction')
+            cax = addCAxes(axes[1,iper],location='bottom',pad=0.20)
+            plt.colorbar(cax=cax,orientation='horizontal')
+            pass
+
+
     def copy(self):
         from copy import deepcopy
         return deepcopy(self)

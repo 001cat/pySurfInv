@@ -55,6 +55,22 @@ def calMantleQ(deps,vpvs,period=1,age=4.0):
     qs = A * (2*np.pi*1/period)**0.1 * np.exp(0.1*(2.5e5+3.2*9.8*deps*10)/(8.314472*temps))
     qp = 1./(4./3.*vpvs**(-2) / qs + (1-4./3.*vpvs**(-2))/57823.)
     return qs,qp
+def calMantleQFromRuan(deps,vpvs,period=1,age=4.0):
+    """ get Q value for mantle layer, follw Eq(4) from Ye (2013)
+        Calculate Q value for 20 sec period, Q doesn't change a lot with period, age in unit of Ma
+    """
+    from scipy.special import erf
+    Tm = 1315. # deep mantle temperature in celsius
+    A = 30. # A value in Ye 2013 eq(4)
+    age = max(1e-3,age)
+    temps = Tm*erf(500*deps/np.sqrt(age*365*24*3600))+273.15 # depth dependent mantle temperature in Kelvin
+    qs = A * (2*np.pi*1/period)**0.1 * np.exp(0.1*(2.5e5+3.2*9.8*deps*10)/(8.314472*temps))
+    qp = 1./(4./3.*vpvs**(-2) / qs + (1-4./3.*vpvs**(-2))/57823.)
+    qs = np.zeros(deps.shape)
+    qs[deps>=125] = 120
+    qs[deps<=50] = 150
+    qs[(deps<125)*(deps>50)] = 50
+    return qs,qp
 def calCrustQ(vpvs):
     qs = 350
     qp = 1./(4./3.*(vpvs)**(-2) / qs + (1-4./3.*(vpvs)**(-2))/57823.)
@@ -543,6 +559,8 @@ class Model1D(object):
             qpCrust = 1./(4./3.*(vpvsC)**(-2) / qsCrust + (1-4./3.*(vpvsC)**(-2))/57823.)
             qsCrust,qpCrust   = calCrustQ(vpvsC)
             qsMantle,qpMantle = calMantleQ(deps[typeLst=='mantle'],vpvsM,age=self.info['lithoAge'])
+            if 'Qmodel' in self.info.keys() and self.info['Qmodel'] is 'Ruan2018':
+                qsMantle,qpMantle = calMantleQFromRuan(deps[typeLst=='mantle'],vpvsM,age=self.info['lithoAge'])
             tmp[4,typeLst=='crust'] = qsCrust
             tmp[5,typeLst=='crust'] = qpCrust
             tmp[4,typeLst=='mantle'] = qsMantle[:]
@@ -1381,7 +1399,7 @@ class Model3D(object):
 
         return fig,ax1,ax2
 
-    def _plotBasemap(self,loc='Cascadia'):
+    def _plotBasemap(self,loc='Cascadia',ax=None):
         from Triforce.customPlot import plotLocalBase
         if loc=='Cascadia':
             minlon,maxlon,minlat,maxlat,dlon,dlat = -132,-121,39,50,2,3
@@ -1390,7 +1408,7 @@ class Model3D(object):
             dlat,dlon = (maxlat-minlat)//5,(maxlon-minlon)//3
         else:
             minlon,maxlon,minlat,maxlat,dlon,dlat = loc
-        fig,m = plotLocalBase(minlon,maxlon,minlat,maxlat,dlat=dlat,dlon=dlon,resolution='l')
+        fig,m = plotLocalBase(minlon,maxlon,minlat,maxlat,dlat=dlat,dlon=dlon,resolution='l',ax=ax)
         m.readshapefile('/home/ayu/Projects/Cascadia/Models/Plates/PB2002_boundaries','PB2002_boundaries',
             linewidth=2.0,color='orange')
         return fig,m
@@ -1465,26 +1483,43 @@ class Model3D(object):
         plt.colorbar(location='bottom',fraction=0.012,aspect=50)
         plt.clim(-100,100)
         plt.savefig('SedimentH-Change.png')
-    def checkPhaseVelocity(self,pers=[16,24,36]):
-        from Triforce.customPlot import plotLocalBase,addCAxes
-        vminmax = {'020s':(3.3,3.9),
+    def checkPhaseVelocity(self,pers='all',savefig=False):
+        from Triforce.customPlot import addCAxes
+        vminmax = {
+                '010s':(3.0,4.0),
+                '012s':(3.0,4.0),
+                '014s':(3.0,4.0),
                 '016s':(3.0,4.0),
+                '018s':(3.1,4.0),
+                '020s':(3.3,4.0),
+                '022s':(3.3,4.0),
                 '024s':(3.3,4.0),
+                '026s':(3.3,4.0),
+                '028s':(3.3,4.0),
+                '030s':(3.4,4.0),
+                '032s':(3.5,4.0),
                 '036s':(3.6,4.0),
                 '040s':(3.6,4.0),
+                '050s':(3.6,4.0),
                 '060s':(3.7,4.0),
-                '080s':(3.8,4.05)}
-        minlon,maxlon,minlat,maxlat = self.lons[0],self.lons[-1],self.lats[0],self.lats[-1]
-        dlat,dlon = (maxlat-minlat)//5,(maxlon-minlon)//3
-        fig, axes = plt.subplots(2,3,figsize=[12,8])
-        plt.subplots_adjust(wspace=0.25,hspace=0.3,left=0.08,right=0.92,bottom=0.15)
+                '070s':(3.7,4.0),
+                '080s':(3.8,4.05)
+                }
+        if pers == 'all':
+            pers = []
+            for disp in self.disps.reshape(-1):
+                if disp is not None:
+                    pers.extend(disp['T'])
+            pers = list(set(pers)); pers.sort()
+        disps = {} 
         for iper,per in enumerate(pers):
-            # print(iper)
-            Tstr = f'{per:03d}s'
+            print(per)
+            Tstr = f'{int(per):03d}s'
             vmin,vmax = vminmax[Tstr] if Tstr in vminmax.keys() else (None,None)
             m,n = self.XX.shape
             pvelo = np.ma.masked_array(np.zeros(self.XX.shape),mask=self.mask)
             pvelp = np.ma.masked_array(np.zeros(self.XX.shape),mask=self.mask)
+            uncer = np.ma.masked_array(np.zeros(self.XX.shape),mask=self.mask)
             for i in range(m):
                 for j in range(n):
                     if self.mask[i,j]:
@@ -1493,16 +1528,29 @@ class Model3D(object):
                     ind = disp['T'].index(int(Tstr[:-1]))
                     pvelo[i,j] = disp['pvelo'][ind]
                     pvelp[i,j] = disp['pvelp'][ind]
-            _,m = plotLocalBase(minlon,maxlon,minlat,maxlat,dlat=dlat,dlon=dlon,resolution='l',ax=axes[0,iper])
-            m.pcolormesh(self.XX-360,self.YY,pvelo,latlon=True,cmap=cvcpt,shading='gouraud',vmin=vmin,vmax=vmax)
-            axes[0,iper].set_title(f'{Tstr} -- Observation')
-            _,m = plotLocalBase(minlon,maxlon,minlat,maxlat,dlat=dlat,dlon=dlon,resolution='l',ax=axes[1,iper])
-            m.pcolormesh(self.XX-360,self.YY,pvelp,latlon=True,cmap=cvcpt,shading='gouraud',vmin=vmin,vmax=vmax)
-            axes[1,iper].set_title(f'{Tstr} -- Prediction')
-            cax = addCAxes(axes[1,iper],location='bottom',pad=0.20)
-            plt.colorbar(cax=cax,orientation='horizontal')
-            pass
+                    uncer[i,j] = disp['uncer'][ind]
+            disps[per] = {'pvelo':pvelo,'pvelp':pvelp}
 
+            fig, axes = plt.subplots(1,3,figsize=[12,4.8])
+            plt.subplots_adjust(wspace=0.25,hspace=0.3,left=0.08,right=0.92,bottom=0.15)
+            _,m1 = self._plotBasemap(loc='auto',ax=axes[0])
+            _,m2 = self._plotBasemap(loc='auto',ax=axes[1])
+            _,m3 = self._plotBasemap(loc='auto',ax=axes[2])
+
+            XX,YY = self.XX-360,self.YY
+            im = m1.pcolormesh(XX,YY,pvelo,latlon=True,cmap=cvcpt,shading='gouraud',ax=axes[0],vmin=vmin,vmax=vmax)
+            cax = addCAxes(axes[0],location='bottom',size=0.03,pad=0.20);plt.colorbar(im,cax=cax,orientation='horizontal')
+            im = m2.pcolormesh(XX,YY,pvelp,latlon=True,cmap=cvcpt,shading='gouraud',ax=axes[1],vmin=vmin,vmax=vmax)
+            cax = addCAxes(axes[1],location='bottom',size=0.03,pad=0.20);plt.colorbar(im,cax=cax,orientation='horizontal')
+            im = m3.pcolormesh(XX,YY,(pvelp-pvelo)/uncer,latlon=True,cmap=cvcpt,shading='gouraud',ax=axes[2],vmin=-3,vmax=3)
+            cax = addCAxes(axes[2],location='bottom',size=0.03,pad=0.20);plt.colorbar(im,cax=cax,orientation='horizontal')
+            axes[0].set_title(f'Observation T={int(per):02d}s')
+            axes[1].set_title(f'Prediction T={int(per):02d}s')
+            axes[2].set_title(f'Pred-Obs (normed by uncer)')
+
+            if savefig:
+                plt.savefig(f'PhaseVel-{int(per):02d}s.png')
+                plt.close()
 
     def copy(self):
         from copy import deepcopy

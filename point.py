@@ -559,7 +559,7 @@ class Model1D(object):
             qpCrust = 1./(4./3.*(vpvsC)**(-2) / qsCrust + (1-4./3.*(vpvsC)**(-2))/57823.)
             qsCrust,qpCrust   = calCrustQ(vpvsC)
             qsMantle,qpMantle = calMantleQ(deps[typeLst=='mantle'],vpvsM,age=self.info['lithoAge'])
-            if 'Qmodel' in self.info.keys() and self.info['Qmodel'] is 'Ruan2018':
+            if 'Qmodel' in self.info.keys() and self.info['Qmodel'] == 'Ruan2018':
                 qsMantle,qpMantle = calMantleQFromRuan(deps[typeLst=='mantle'],vpvsM,age=self.info['lithoAge'])
             tmp[4,typeLst=='crust'] = qsCrust
             tmp[5,typeLst=='crust'] = qpCrust

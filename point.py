@@ -43,33 +43,118 @@ def randString(N):
     import random,string
     ''' Return a random string '''
     return ''.join([random.choice(string.ascii_letters + string.digits) for i in range(N)])
+
+def calT_HSCM(zdeps,age,z0=0):
+    ''' temperature calculated from half space cooling model, topography change ignored''' 
+    from scipy.special import erf
+    T0 = 273.15; Tm = T0+1350
+    T = (Tm-T0)*erf((zdeps-z0)*1e3/(2*np.sqrt(age*365*24*3600*1)))+T0 # suppose kappa=1e-6
+    adiaBegin = np.where(np.diff(T)/np.diff(zdeps) < 0.4)[0][0]
+    T[adiaBegin:] = T[adiaBegin]+(zdeps[adiaBegin:]-zdeps[adiaBegin])*0.4
+    return T
+def calP(zdeps):
+    return 3.2e3*9.8*zdeps*1000
+
 def calMantleQ(deps,vpvs,period=1,age=4.0):
     """ get Q value for mantle layer, follw Eq(4) from Ye (2013)
-        Calculate Q value for 20 sec period, Q doesn't change a lot with period, age in unit of Ma
+        Calculate Q value for 1 sec period, Q doesn't change a lot with period, age in unit of Ma
     """
-    from scipy.special import erf
-    Tm = 1315. # deep mantle temperature in celsius
-    A = 30. # A value in Ye 2013 eq(4)
-    age = max(1e-3,age)
-    temps = Tm*erf(500*deps/np.sqrt(age*365*24*3600))+273.15 # depth dependent mantle temperature in Kelvin
-    qs = A * (2*np.pi*1/period)**0.1 * np.exp(0.1*(2.5e5+3.2*9.8*deps*10)/(8.314472*temps))
+    A = 30 # A value in Ye 2013 eq(4)
+    temps = calT_HSCM(deps,max(1e-3,age))
+    press = calP(deps)
+    qs = A * (2*np.pi*1/period)**0.1 * np.exp(0.1*(2.5e5+press*1e-5)/(8.314472*temps))
     qp = 1./(4./3.*vpvs**(-2) / qs + (1-4./3.*vpvs**(-2))/57823.)
     return qs,qp
-def calMantleQFromRuan(deps,vpvs,period=1,age=4.0):
-    """ get Q value for mantle layer, follw Eq(4) from Ye (2013)
-        Calculate Q value for 20 sec period, Q doesn't change a lot with period, age in unit of Ma
-    """
-    from scipy.special import erf
-    Tm = 1315. # deep mantle temperature in celsius
-    A = 30. # A value in Ye 2013 eq(4)
-    age = max(1e-3,age)
-    temps = Tm*erf(500*deps/np.sqrt(age*365*24*3600))+273.15 # depth dependent mantle temperature in Kelvin
-    qs = A * (2*np.pi*1/period)**0.1 * np.exp(0.1*(2.5e5+3.2*9.8*deps*10)/(8.314472*temps))
+
+def calMantleQ_Ruan(deps,vpvs,period=1,age=4.0):
+    def calQ_Ruan(T,P,period,damp=False):
+        ''' calculate quality factor follow Ruan+(2018) 
+        T: temperature in K
+        P: pressure in Pa
+        period: seismic wave period in second
+        '''
+        from scipy.special import erf
+        def calTn(T,P): # solidus given pressure and temperature
+            P = P/1e9
+            if damp:
+                Tm = -5.1*P**2 + 92.5*P + 1120.6 + 273.15
+            else:
+                Tm = -5.1*P**2 + 132.9*P + 1120.6 + 273.15
+            return T/Tm
+        def calTauM(T,P): # Maxwell time for viscous relaxation
+            def A_eta(Tn):
+                gamma = 5
+                Tn_eta = 0.94
+                minuslamphi = 0
+                Aeta = np.zeros(Tn.shape)
+                for i in range(len(Tn)):
+                    if Tn[i]<Tn_eta:
+                        Aeta[i] = 1
+                    elif Tn[i] < 1:
+                        Aeta[i] = np.exp( -(Tn[i]-Tn_eta)/(Tn[i]-Tn[i]*Tn_eta)*np.log(gamma) )
+                    else:
+                        Aeta[i] = 1/gamma*np.exp(minuslamphi)
+                return Aeta
+            E = 4.625e5
+            R = 8.314
+            V = 7.913e-6
+            etaR = 6.22e21
+            TR = 1200+273.15
+            PR = 1.5e9
+
+            mu_U = (72.45-0.01094*(T-273.15)+1.75*P*1e-9)*1e9
+            eta = etaR * np.exp(E/R*(1/T-1/TR)) * np.exp(V/R*(P/T-PR/TR)) * A_eta(calTn(T,P))
+            tauM = eta/mu_U
+            return tauM
+        
+        def A_P(Tn):
+            ap = np.zeros(Tn.shape)
+            for i in range(len(Tn)):
+                if Tn[i] < 0.91:
+                    ap[i] = 0.01
+                elif Tn[i] < 0.96:
+                    ap[i] = 0.01+0.4*(Tn[i]-0.91)
+                elif Tn[i] < 1:
+                    ap[i] = 0.03
+                else:
+                    ap[i] = 0.03+0
+            return ap
+        def sig_P(Tn):
+            sigp = np.zeros(Tn.shape)
+            for i in range(len(Tn)):
+                if Tn[i]<0.92:
+                    sigp[i] = 4
+                elif Tn[i] < 1:
+                    sigp[i] = 4+37.5*(Tn[i]-0.92)
+                else:
+                    sigp[i] = 7
+            return sigp
+
+        A_B = 0.664
+        tau_np = 6e-5
+        alpha = 0.38
+
+        tau_M = calTauM(T,P)
+        tau_ns = period/(2*np.pi*tau_M)
+
+        J1b = A_B*(tau_ns**alpha)/alpha
+        J1p = np.sqrt(2*np.pi)/2*A_P(calTn(T,P))*sig_P(calTn(T,P))*(1-erf(np.log(tau_np/tau_ns)/(np.sqrt(2)*sig_P(calTn(T,P)))))
+        J2b = np.pi/2* A_B*(tau_ns**alpha)
+        J2p = np.pi/2* (A_P(calTn(T,P))*np.exp(-((np.log(tau_np/tau_ns)/(np.sqrt(2)*sig_P(calTn(T,P))))**2)))
+        J2e = tau_ns
+        J1 = 1+J1b+J1p
+        J2 = J2b+J2p+J2e
+
+        return J1/J2
+    A = 30 # A value in Ye 2013 eq(4)
+    temps = calT_HSCM(deps,max(1e-3,age))
+    press = calP(deps)
+    qs = calQ_Ruan(temps,press,period,damp=True)
     qp = 1./(4./3.*vpvs**(-2) / qs + (1-4./3.*vpvs**(-2))/57823.)
-    qs = np.zeros(deps.shape)
-    qs[deps>=125] = 120
-    qs[deps<=50] = 150
-    qs[(deps<125)*(deps>50)] = 50
+    # qs = np.zeros(deps.shape)
+    # qs[deps>=125] = 120
+    # qs[deps<=50] = 150
+    # qs[(deps<125)*(deps>50)] = 50
     return qs,qp
 def calCrustQ(vpvs):
     qs = 350
@@ -813,6 +898,15 @@ class PostPoint(Point):
 
             self.thres  = max(self.minMod.misfit*2, self.minMod.misfit+0.5)
             self.accFinal = (self.misfits < self.thres)
+
+            bspl = BsplBasis(np.linspace(0,1,1000),5,4)
+            roughBasis = (bspl.basis[:,:-2] + bspl.basis[:,2:] - 2*bspl.basis[:,1:-1])
+            avgParas = np.mean(self.MCparas[self.accFinal,:],axis=0)
+            biaParas = self.MCparas[:,-5:] - avgParas[-5:]
+            rough = np.array([abs(np.dot(biaParas[ind],roughBasis)).sum() for ind in range(self.N)])
+            self.accFinal = (self.misfits < self.thres) * (rough<=0.004)
+            print(f'rejected by roughness:{(1-self.accFinal.sum()/(self.misfits < self.thres).sum())*100:.2f}%')
+            
 
             self.avgMod         = self.initMod.copy()
             self.avgMod.updateVars(np.mean(self.MCparas[self.accFinal,:],axis=0))

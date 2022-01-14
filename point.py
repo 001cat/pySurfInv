@@ -645,7 +645,7 @@ class Model1D(object):
             qsCrust,qpCrust   = calCrustQ(vpvsC)
             qsMantle,qpMantle = calMantleQ(deps[typeLst=='mantle'],vpvsM,age=self.info['lithoAge'])
             if 'Qmodel' in self.info.keys() and self.info['Qmodel'] == 'Ruan2018':
-                qsMantle,qpMantle = calMantleQFromRuan(deps[typeLst=='mantle'],vpvsM,age=self.info['lithoAge'])
+                qsMantle,qpMantle = calMantleQ_Ruan(deps[typeLst=='mantle'],vpvsM,age=self.info['lithoAge'])
             tmp[4,typeLst=='crust'] = qsCrust
             tmp[5,typeLst=='crust'] = qpCrust
             tmp[4,typeLst=='mantle'] = qsMantle[:]
@@ -899,13 +899,13 @@ class PostPoint(Point):
             self.thres  = max(self.minMod.misfit*2, self.minMod.misfit+0.5)
             self.accFinal = (self.misfits < self.thres)
 
-            bspl = BsplBasis(np.linspace(0,1,1000),5,4)
-            roughBasis = (bspl.basis[:,:-2] + bspl.basis[:,2:] - 2*bspl.basis[:,1:-1])
-            avgParas = np.mean(self.MCparas[self.accFinal,:],axis=0)
-            biaParas = self.MCparas[:,-5:] - avgParas[-5:]
-            rough = np.array([abs(np.dot(biaParas[ind],roughBasis)).sum() for ind in range(self.N)])
-            self.accFinal = (self.misfits < self.thres) * (rough<=0.004)
-            print(f'rejected by roughness:{(1-self.accFinal.sum()/(self.misfits < self.thres).sum())*100:.2f}%')
+            # bspl = BsplBasis(np.linspace(0,1,1000),5,4)
+            # roughBasis = (bspl.basis[:,:-2] + bspl.basis[:,2:] - 2*bspl.basis[:,1:-1])
+            # avgParas = np.mean(self.MCparas[self.accFinal,:],axis=0)
+            # biaParas = self.MCparas[:,-5:] - avgParas[-5:]
+            # rough = np.array([abs(np.dot(biaParas[ind],roughBasis)).sum() for ind in range(self.N)])
+            # self.accFinal = (self.misfits < self.thres) * (rough<=0.004)
+            # print(f'rejected by roughness:{(1-self.accFinal.sum()/(self.misfits < self.thres).sum())*100:.2f}%')
             
 
             self.avgMod         = self.initMod.copy()

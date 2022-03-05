@@ -44,6 +44,8 @@ def randString(N):
     ''' Return a random string '''
     return ''.join([random.choice(string.ascii_letters + string.digits) for i in range(N)])
 
+
+
 def calT_HSCM(zdeps,age,z0=0):
     ''' temperature calculated from half space cooling model, topography change ignored''' 
     from scipy.special import erf
@@ -283,21 +285,22 @@ class Setting(dict):
             self._updateCrust(crsthk)
         if lithoAge is not None:
             self.info['lithoAge'] = lithoAge
-    # def _updateVars(self,newParas):  #for test only
-    #     i = 0
-    #     for ltype in self.keys():
-    #         if ltype == 'Info':
-    #             continue
-    #         for k in self[ltype].keys():
-    #             if type(self[ltype][k]) is str:
-    #                 continue
-    #             if type(self[ltype][k][0]) is list:
-    #                 for j in range(len(self[ltype][k])):
-    #                     if self[ltype][k][j][1] in ('abs','rel'):
-    #                         self[ltype][k][j][0] = newParas[i];i+=1
-    #             else:
-    #                 if self[ltype][k][1] in ('abs','rel'): 
-    #                     self[ltype][k][0] = newParas[i];i+=1
+    def _updateVars(self,newParas):  #for test only
+        #     i = 0
+        #     for ltype in self.keys():
+        #         if ltype == 'Info':
+        #             continue
+        #         for k in self[ltype].keys():
+        #             if type(self[ltype][k]) is str:
+        #                 continue
+        #             if type(self[ltype][k][0]) is list:
+        #                 for j in range(len(self[ltype][k])):
+        #                     if self[ltype][k][j][1] in ('abs','rel'):
+        #                         self[ltype][k][j][0] = newParas[i];i+=1
+        #             else:
+        #                 if self[ltype][k][1] in ('abs','rel'): 
+        #                     self[ltype][k][0] = newParas[i];i+=1
+        pass
     def copy(self):
         return deepcopy(self)
 
@@ -343,6 +346,8 @@ class SurfLayer(object):
         self.paraDict = {}
         if self.mtype == 'water':
             self.paraDict['h'] = dictL2R(settingDict['h'])
+            if self.paraDict['h'].vmin is not None:
+                self.paraDict['h'].vmin = max(0,self.paraDict['h'].vmin)
             self.paraDict['vp'] = dictL2R(settingDict['vp'])
         elif self.mtype == 'grid':
             self.paraDict['zdeps'] = np.array([RandVar(vs) for vs in settingDict['zdeps']])
@@ -350,8 +355,13 @@ class SurfLayer(object):
             self.paraDict['vpvs'] = dictL2R(settingDict['vpvs'])
         else:
             self.paraDict['h'] = dictL2R(settingDict['h'])
+            if self.paraDict['h'].vmin is not None:
+                self.paraDict['h'].vmin = max(0,self.paraDict['h'].vmin)
             self.paraDict['vs'] = dictL2R(settingDict['vs'])
             self.paraDict['vpvs'] = dictL2R(settingDict['vpvs'])
+        # self.paraDict['h'] = RandVar(float(self.paraDict['h']),vmin=0,
+        #                              vmax=self.paraDict['h'].vmax,
+        #                              step=self.paraDict['h'].step)
     @property
     def H(self):
         if self.mtype == 'grid':
@@ -374,7 +384,10 @@ class SurfLayer(object):
         elif self.mtype == 'constant':
             nFine = 1 if type(self.vs) is not list else len(self.vs)
         elif self.mtype == 'linear':
-            nFine = min(20,int(self.H/1.0)) if self.H > 10 else max(int(self.H/1),2)
+            if self.type == 'sediment':
+                nFine = min(max(int(self.H/0.2),2),10)
+            else:
+                nFine = min(20,int(self.H/1.0)) if self.H > 10 else max(int(self.H/1),2)
         elif self.mtype == 'Bspline':
             if self.H >= 150:
                 nFine = 60
@@ -399,6 +412,33 @@ class SurfLayer(object):
                 for vsub in v:
                     n += (vsub.vmin is not None)
         return n
+    
+    # def _vpProfile(self,flag):
+    #     if flag == 'water':
+    #         return [self.vp]*self.nFine
+    #     elif flag == 'vpvs':
+    #         return self._vsProfile()*self.vpvs
+    #     elif flag == 'marineSed':    # marine sediments and rocks, Hamilton 1979
+    #         return self._vsProfile()*1.23 + 1.28
+    #     else:
+    #         raise ValueError(f'Unsupported flag: {flag}.')
+    # def _rhoProfile(self,flag):
+    #     ts = self._vsProfile()
+    #     tp = self._vpProfile()
+    #     if flag == 'water':
+    #         return [1.027]*self.nFine
+    #     elif flag == 1: # Brocher, 2005, with relationship between rho and vs, regression made by Weisen Shen 2014 Jan.;
+    #         return 1.22679 + 1.53201*ts -0.83668*ts*ts + 0.20673*ts*ts*ts -0.01656*ts*ts*ts*ts
+    #     elif flag == 2: # Kaban, M. K et al. (2003), Density of the continental roots, used in Leon's and Weisen's code
+    #         return 3.4268+(ts-4.5)/4.5
+    #     elif flag == 3: # from Hongda's code, reference to be completed 
+    #         return 0.541 + 0.3601*tp
+    #     elif flag == 4: # http://en.wikipedia.org/wiki/Gardner's_relation 
+    #         return 0.31 *  (tp*1000.)**0.25
+    #     else:
+    #         raise ValueError(f'Unsupported flag: {flag}.')
+
+    
     def bspl(self,z,nBasis,deg):
         if hasattr(self,'_bspl') and (nBasis == self._bspl.nBasis) and \
            (deg == self._bspl.deg) and (len(z) == self._bspl.n):
@@ -473,7 +513,7 @@ class SurfLayer(object):
         elif self.type+self.stype == 'sediment':
             vpvs = 2.0 if not hasattr(self,'vpvs') else self.vpvs
             # vp   = vs*vpvs
-            vp   = vs*1.23 + 1.28   # marine sediments and rocks, Hamilton 1979
+            vp   = vs*1.23 + 1.28   
             rho  = 0.541 + 0.3601*vp
             qs  = [80.]   *self.nFine
             qp  = [160.]  *self.nFine
@@ -483,10 +523,23 @@ class SurfLayer(object):
             rho  = 0.541 + 0.3601*vp
             qs  = [80.]   *self.nFine
             qp  = [160.]  *self.nFine
+        elif self.type+self.stype == 'sedimentland1':
+            vpvs = self.vpvs
+            vp   = vs*vpvs
+            # rho  = 0.541 + 0.3601*vp
+            rho  = 1.22679 + 1.53201*vs - 0.83668*vs*vs + 0.20673*vs**3 - 0.01656*vs**4
+            qs  = [80.]   *self.nFine
+            qp  = [160.]  *self.nFine
         elif self.type+self.stype == 'crust':
             vpvs = 1.8 if not hasattr(self,'vpvs') else self.vpvs
             vp   = vs*vpvs
             rho  = 0.541 + 0.3601*vp
+            qs  = [600.]   *self.nFine
+            qp  = [1400.]  *self.nFine
+        elif self.type+self.stype == 'crustland':
+            vpvs = 1.8 if not hasattr(self,'vpvs') else self.vpvs
+            vp   = vs*vpvs
+            rho  = 1.22679 + 1.53201*vs - 0.83668*vs*vs + 0.20673*vs**3 - 0.01656*vs**4
             qs  = [600.]   *self.nFine
             qp  = [1400.]  *self.nFine
         elif self.type+self.stype == 'mantle':
@@ -723,8 +776,11 @@ class Model1D(object):
         # if np.any(vsMantle < 4.0):
         #     return False
         # change in mantle < 15%
-        if (vsMantle.max() - vsMantle.min()) > 0.15*vsMantle.mean():
-            return False
+        if 'largeMantleChange' in self.info.keys() and self.info['largeMantleChange'] is True:
+            pass
+        else:
+            if (vsMantle.max() - vsMantle.min()) > 0.15*vsMantle.mean():
+                return False
         # Oscillation Limit
         osciLim = 0.1*vsMantle.mean()
         indLocMax = scipy.signal.argrelmax(vsMantle)[0]
@@ -736,8 +792,8 @@ class Model1D(object):
                 return False
 
         # temporary only
-        # if vsMantle[-1] - vsMantle[-2] < 0:
-        #     return False
+        if len(indLocMin) > 1:
+            return False
 
         return True
     def plotProfile(self,type='vs',**kwargs):
@@ -1006,6 +1062,7 @@ class PostPoint(Point):
         plt.plot(T,self.minMod.forward(T),label='Min misfit')
         plt.legend()
         plt.title('Dispersion')
+        return plt.gcf(),plt.gca()
     def plotDistrib(self,inds='all'):
         if inds == 'all':
             inds = range(len(self.initMod._paras()))
@@ -1038,7 +1095,7 @@ class PostPoint(Point):
             fig.set_figheight(8.4);fig.set_figwidth(5)
         mod = self.avgMod.copy()
         indFinAcc = np.where(self.accFinal)[0]
-        for i in range(min(len(indFinAcc),(self.N if allAccepted else 2000))):
+        for i in range(min(len(indFinAcc),(self.N if allAccepted else 500))):
             ind = indFinAcc[i] if allAccepted else random.choice(indFinAcc)
             mod.updateVars(self.MCparas[ind,:])
             mod.plotProfileGrid(fig=fig,color='grey',ax=ax,lw=0.1)
@@ -1453,7 +1510,7 @@ class Model3D(object):
         plt.gca().invert_yaxis()
 
     def plotSection(self,lon1,lat1,lon2,lat2,vCrust=[3.0,4.0],vMantle=[4.0,4.5],cmap=cvcpt,
-                    maxD=200,shading='gouraud',title=None):
+                    maxD=200,shading='gouraud',title=None,decorateFuns=[]):
         from Triforce.customPlot import addAxes,addCAxes
         XX,YY,Z,moho,topo = self.section(lon1,lat1,lon2,lat2)
         mask = ~(YY <= np.tile(moho,(YY.shape[0],1)))
@@ -1491,6 +1548,9 @@ class Model3D(object):
         plt.ylim(0,maxD)
         plt.gca().invert_yaxis()
 
+        for foo in decorateFuns:
+            foo(lon1,lat1,lon2,lat2)
+            
         return fig,ax1,ax2
 
     def _plotBasemap(self,loc='Cascadia',ax=None):

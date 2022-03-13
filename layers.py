@@ -384,9 +384,16 @@ class Seis_Mantle_Therm_Bspline_Mix_Ocean(SeisLayer):
             l[l<-25] = -25
             lam = 1/(1+np.exp(-l))
             return y1*(1-lam)+y2*lam
-
-        vs = merge(z,seisMod.vs/1000,self.bspl(z)*np.array([0]+list(self.parm['Vs']))+seisMod.vs/1000,xL=10,xK=20,xH=40,s=1/3)
-        # vs = self.bspl(z)*np.array([0]+list(self.parm['Vs']))+seisMod.vs/1000
+        def meltStart(age):
+            therMod = HSCM(age=age)
+            P = therMod.T/1e9
+            solidus = -5.1*P**2 + 92.5*P + 1120.6 + 273.15
+            return therMod.zdeps[therMod.T > 1.0*solidus][0]
+        # vs = merge(z,seisMod.vs/1000,self.bspl(z)*np.array([0]+list(self.parm['Vs']))+seisMod.vs/1000,
+        #            xL=10,xK=20,xH=40,s=1/3)
+        zMelt = meltStart(max(1e-3,self.parm['Age']))-self.hCrust
+        vs = merge(z,seisMod.vs/1000,self.bspl(z)*np.array([0]+list(self.parm['Vs']))+seisMod.vs/1000,
+                   xL=zMelt,xK=zMelt+10,xH=zMelt+30,s=1/3)
         vp  = vs*1.76
         rho = 3.4268+(vs-4.5)/4.5
         qs  = np.array( [150.]  * (N+1) )

@@ -334,15 +334,40 @@ if __name__ == '__main__':
     # plt.legend()
 
     ''' real data test '''
-    for pid in ['232.0_46.0','233.0_46.0','234.0_46.0'][1:]:
+    from netCDF4 import Dataset
+    from Triforce.utils import GeoMap
+    with Dataset('example-Cascadia/infos/ETOPO_Cascadia_smoothed.grd') as dset:
+        topo = GeoMap(dset['lon'][()],dset['lat'][()],dset['z'][()]/1000)
+    with Dataset('example-Cascadia/infos/sedthick_world_v2.grd') as dset:
+        sedthkOce = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()]/1000)
+    with Dataset('example-Cascadia/infos/age_JdF_model_0.01.grd') as dset:
+        lithoAge = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()])
+    topoDict = {
+        '232.0_46.0':topo.value(232.0,46.0),
+        '233.0_46.0':topo.value(233.0,46.0),
+        '234.0_46.0':topo.value(234.0,46.0)
+    }
+    sedthkDict = {
+        '232.0_46.0':0.8, #0.396
+        '233.0_46.0':sedthkOce.value(233.0,46.0),
+        '234.0_46.0':sedthkOce.value(234.0,46.0)
+    }
+    lithoAgeDict = {
+        '232.0_46.0':lithoAge.value(232.0,46.0),
+        '233.0_46.0':5, #6.73
+        '234.0_46.0':15 #8.10
+    }
+
+
+    for pid in ['232.0_46.0','233.0_46.0','234.0_46.0']:
         postp = PostPoint(f'/work2/ayu/Cascadia/Works/invA0_2022_Jan10/OceanInv/{pid}.npz')
         pers,vels,uncers = postp.obs['T'],postp.obs['c'],postp.obs['uncer']
-        topo        = postp.initMod.info['topo']
-        sedthk      = postp.initMod.info['sedthk']
-        lithoAge    = postp.initMod.info['lithoAge']
-        if pid == '234.0_46.0':
-            lithoAge = 10
-        p = Point('cascadia-ocean.yml',{'topo':topo,'lithoAge':lithoAge,'sedthk':2},
+        if pid == '233.0_46.0':
+            pers,vels,uncers = pers[:-1],vels[:-1],uncers[:-1]
+        p = Point('cascadia-ocean.yml',{
+            'topo':topoDict[pid],
+            'lithoAge':lithoAgeDict[pid],
+            'sedthk':sedthkDict[pid]},
                 periods=pers,vels=vels,uncers=uncers)
         if pid == '233.0_46.0':
             from pySurfInv.brownian import BrownianVar
@@ -358,8 +383,8 @@ if __name__ == '__main__':
     plt.legend()
     plt.xlim(4.0,4.8)
 
-    pid = '234.0_46.0'
+    pid = '232.0_46.0'
     postp = PostPoint(f'MCtest/{pid}.npz',f'MCtest_priori/{pid}.npz')
     postp.plotVsProfileGrid()
-    postp.plotDistrib()
+    postp.plotDistrib([0,-1])
     postp.plotDisp()

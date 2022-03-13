@@ -36,7 +36,7 @@ class HSCM(TherModel):
         except:
             pass
         return T+C2K
-    def calP(self):
+    def calP(self):  # in Pa
         return 3.2e3*9.8*self.zdeps*1000
 
 class seisModel():

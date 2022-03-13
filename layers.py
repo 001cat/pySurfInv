@@ -182,7 +182,7 @@ class Seis_Crust_Bspline_Ocean(SeisLayer):
             return N
         N   = getN(self.parm['H'])
         z   = np.linspace(0, self.parm['H'], N+1)
-        vs  = np.linspace(self.parm['Vs'][0],self.parm['Vs'][1],N+1)
+        vs  = self.bspl(z) * self.parm['Vs']
         vp  = vs*1.8
         rho = 0.541 + 0.3601*vp
         qs  = np.array( [350]  * (N+1) )

@@ -153,7 +153,7 @@ def buildModel1D(ymlFile,localInfo={}):
         import yaml
         with open(ymlFile, 'r') as f:
             rawDict = yaml.load(f,Loader=yaml.FullLoader)
-    modelType = rawDict['Info'].get('ModelType','General_Model')
+    modelType = rawDict['Info'].get('ModelType','Cascadia_Oceanic')
     if modelType == 'General_Model':
         mod = Model1D()
         mod.loadYML(rawDict,localInfo)

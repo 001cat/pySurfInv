@@ -123,7 +123,10 @@ class Model3D(GeoGrid):
                 I = grp == k
                 for i in range(len(inProfiles)-1):
                     n = len(inProfiles[i][I])
-                    outProfiles_seg = np.interp(np.linspace(0,1,v),np.linspace(0,1,n),inProfiles[i][I])
+                    if n == 0:
+                        outProfiles_seg = np.zeros(v)*np.nan
+                    else:
+                        outProfiles_seg = np.interp(np.linspace(0,1,v),np.linspace(0,1,n),inProfiles[i][I])
                     outProfiles[i].extend(list(outProfiles_seg))
                 outProfiles[-1].extend([k]*v)
             outProfiles = [np.array(p) for p in outProfiles[:-1]] + outProfiles[-1:]

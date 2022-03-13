@@ -422,7 +422,7 @@ oldTypeDict = { # to convert previous layer notes to new layer type id, type_mty
         'mantle_Bspline_'           : 'Mantle_Bspline_Ocean', # Mantle_Bspline_Ocean_CascadiaQ if Qmodel: Ruan2018, 
                                                               # see models.loadSetting.dictReshape
         'crust_Bspline_'            : 'Crust_Bspline_Ocean',
-        'seiment_linear_land'       : 'Sediment_Linear_Land'
+        'sediment_linear_land'       : 'Sediment_Linear_Land'
         # 'crust_Bspline_land'        : 'Crust_Bspline_Land'
     }
 

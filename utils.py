@@ -56,3 +56,75 @@ def plotCascadiaSlab4Map(m,levels=[60,75,90,120,150]):
     XX,YY = np.meshgrid(slabDep.lons-360,slabDep.lats)
     cs = m.contour(XX,YY,slabDep.z,latlon=True,levels=levels,colors='white',linewidths=2)
     plt.clabel(cs, fontsize=9, inline=True,colors='k')
+
+
+def plotLayer(h,v,axes=None,label=None,**kwargs):
+    if axes is None:
+        plt.figure(figsize=[5,7])
+        axes = plt.axes()
+    else:
+        plt.axes(axes)
+    hNew = np.insert(np.repeat(np.cumsum(h),2)[:-1],0,0)
+    vNew = np.repeat(v,2)
+    axes.plot(vNew,hNew,label=label,**kwargs)
+    if not axes.yaxis_inverted():
+        axes.invert_yaxis()
+    return axes
+def plotGrid(zdepth,v,fig=None,ax=None,label=None,**kwargs):
+    if ax is None:
+        if fig is None:
+            fig = plt.figure(figsize=[5,7])
+        else:
+            plt.figure(fig.number)
+    else:
+        plt.axes(ax)
+        fig = plt.gcf()
+    plt.plot(v,zdepth,label=label,**kwargs)
+    ax = ax or fig.axes[0]
+    if not ax.yaxis_inverted():
+        ax.invert_yaxis()
+    return fig
+
+
+
+def _dictIterModifier(d,checker,modifier):
+    if type(d) is dict:
+        dOut = {}
+        for k,v in d.items():
+            if checker(v):
+                dOut[k] = modifier(v)
+            elif type(v) in (dict,list):
+                dOut[k] = _dictIterModifier(v,checker,modifier)
+            else:
+                dOut[k] = v
+    elif type(d) is list:
+        dOut = []
+        for v in d:
+            if checker(v):
+                dOut.append(modifier(v))
+            elif type(v) in (dict,list):
+                dOut.append(_dictIterModifier(v,checker,modifier))
+            else:
+                dOut.append(v)
+    else:
+        dOut = d
+    return dOut
+
+
+if __name__ == '__main__':
+    import yaml
+    from brownian import BrownianVar
+    def checker(v):
+        return type(v) is list and len(v)>=2 \
+            and v[1] in ('fixed','total','abs','rel')
+    def modifier(v):
+        if v[1] in ('fixed','total'):
+            return v[0]
+        elif v[1] == 'abs':
+            return BrownianVar(v[0],v[0]-v[2],v[0]+v[2],v[3])
+        elif v[1] == 'rel':
+            return BrownianVar(v[0],v[0]*(1-v[2]/100),v[0]*(1+v[2]/100),v[3])
+        else:
+            raise ValueError(f'Error: Wrong checker??? v={v}')
+    with open('setting-Hongda.yml', 'r') as f:
+        d = _dictIterModifier(yaml.load(f,Loader=yaml.FullLoader),checker,modifier)

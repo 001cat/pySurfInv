@@ -37,7 +37,8 @@ class HSCM(TherModel):
             pass
         return T+C2K
     def calP(self):  # in Pa
-        return 3.2e3*9.8*self.zdeps*1000
+        # change 3.2 to 3.4, the difference is comparable to 4Ma vs 4.1Ma at 30km
+        return 3.4e3*9.8*self.zdeps*1000   # 3.424 in https://doi.org/10.1029/2004JB002965
 
 class seisModel():
     def __init__(self,therModel=None) -> None:

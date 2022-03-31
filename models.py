@@ -73,21 +73,29 @@ def loadSetting(ymlFile='setting-Hongda.yml',localInfo={}):
                 layers[k] = v
             else:                           # for previous yml file
                 if 'Qmodel' in inDict['Info'].keys() and inDict['Info']['Qmodel'] == 'Ruan2018':
-                    oldTypeDict['mantle_Bspline_'] = 'Mantle_Bspline_Ocean_CascadiaQ'
+                    oldTypeDict['mantle_Bspline_'] = 'OceanMantle_CascadiaQ'
                 mtype = '' if 'mtype' not in v.keys() else v['mtype']
                 stype = '' if 'stype' not in v.keys() else v['stype']
                 typeID = oldTypeDict['_'.join([k,mtype,stype])]
-                if typeID == 'Water_Ocean':
+                if typeID == 'OceanWater':
                     layers[typeID] = {'H':v['h'],'Vs':0}
                 else:
                     layers[typeID] = {'H':v['h'],'Vs':v['vs']}
         return layers,info
+
     def mergeLocalInfo(rawDict,info,localInfo):
         from copy import deepcopy
         mergedDict = deepcopy(rawDict)
 
         keys  = [k for k in rawDict.keys()]
-        types = [k.lower().split('_')[0] for k in keys]
+
+        def camel_case_split(str):
+            start_idx = [i for i, e in enumerate(str)
+                        if e.isupper()] + [len(str)]
+            start_idx = [0] + start_idx
+            return [str[x: y] for x, y in zip(start_idx, start_idx[1:])] 
+        types = [camel_case_split(k.split('_')[0])[2].lower() for k in keys]
+        print(types)
 
         if 'topo' in localInfo.keys():
             info['topo'] = localInfo['topo']
@@ -145,6 +153,16 @@ def loadSetting(ymlFile='setting-Hongda.yml',localInfo={}):
         pass
 
     return layerDict,info
+
+
+
+
+
+
+
+
+
+
 
 def buildModel1D(ymlFile,localInfo={}):
     if type(ymlFile) is dict:
@@ -204,10 +222,10 @@ class Model1D():
                 if type(v) is list:
                     for e in v:
                         if type(e) is BrownianVar:
-                            brownians.append([float(e),layer.group,k])
+                            brownians.append([float(e),layer.prop['Group'],k])
                 else:
                     if type(v) is BrownianVar:
-                        brownians.append([float(v),layer.group,k])
+                        brownians.append([float(v),layer.prop['Group'],k])
         if numberOnly:
             brownians = [v[0] for v in brownians]
         return brownians
@@ -218,20 +236,20 @@ class Model1D():
     def seisPropGrids(self,refLayer=False):
         z,vs,vp,rho,qs,qp,grp = [],[],[],[],[],[],[]
         for layer in self.layers:
-            z1,vs1,vp1,rho1,qs1,qp1 = layer.seisPropGrids
+            z1,vs1,vp1,rho1,qs1,qp1 = layer.seisPropGrids()
             z += list(z1)
             vs += list(vs1); vp += list(vp1); rho += list(rho1); qs += list(qs1); qp += list(qp1)
-            grp += [layer.group]*len(z1)
+            grp += [layer.prop['Group']]*len(z1)
         if refLayer:
             refLayer = self._refLayer.copy()
             refLayer.parm['Vs'][0] += vs[-1]
             refLayer.parm['Vs'][1] += vs[-1]
-            z1,vs1,vp1,rho1,qs1,qp1 = refLayer.seisPropGrids
+            z1,vs1,vp1,rho1,qs1,qp1 = refLayer.seisPropGrids()
             vs1 += [vs[-1]-vs1[0]]; vp1 += [vp[-1]-vp1[0]]; rho1 += [rho[-1]-rho1[0]]
             qs1 += [qs[-1]-qs1[0]]; qp1 += [qp[-1]-qp1[0]]
             z += list(z1)
             vs += list(vs1); vp += list(vp1); rho += list(rho1); qs += list(qs1); qp += list(qp1)
-            grp += [refLayer.group]*len(z1)
+            grp += [refLayer.prop['Group']]*len(z1)
         return np.array(z),np.array(vs),np.array(vp),np.array(rho),np.array(qs),np.array(qp),grp
     def seisPropLayers(self,refLayer=False):
         z,vs,vp,rho,qs,qp,grp = self.seisPropGrids(refLayer)
@@ -285,7 +303,7 @@ class Model1D():
         return z[grp.index('mantle')]
     def show(self):
         for layer in self.layers:
-            print(layer.group)
+            print(layer.prop['Group'])
             print(layer.parm)
     
     def plotProfile(self,type='vs',**kwargs):
@@ -305,7 +323,7 @@ class Model1D():
 
     @property
     def _refLayer(self):
-        return buildSeisLayer({'H':300,'Vs':[0,0.35/200*300]},'Mantle_Reference')
+        return buildSeisLayer({'H':300,'Vs':[0,0.35/200*300]},'ReferenceMantle')
     @property
     def layers(self):
         if 'TotalH' in self.info.keys():
@@ -340,45 +358,45 @@ class Model1D_Puregird(Model1D):
     def seisPropGrids(self,refLayer=False):
         z,vs,vp,rho,qs,qp,grp = [],[],[],[],[],[],[]
         for layer in self.layers:
-            z1,vs1,vp1,rho1,qs1,qp1 = layer.seisPropGrids
+            z1,vs1,vp1,rho1,qs1,qp1 = layer.seisPropGrids()
             z += list(z1)
             vs += list(vs1); vp += list(vp1); rho += list(rho1); qs += list(qs1); qp += list(qp1)
-            grp += [layer.group]*len(z1)
+            grp += [layer.prop['Group']]*len(z1)
         if refLayer:
             refLayer = self._refLayer.copy()
             refLayer.parm['Vs'][0] += vs[-1]
             refLayer.parm['Vs'][1] += vs[-1]
-            z1,vs1,vp1,rho1,qs1,qp1 = refLayer.seisPropGrids
+            z1,vs1,vp1,rho1,qs1,qp1 = refLayer.seisPropGrids()
             vs1 += [vs[-1]-vs1[0]]; vp1 += [vp[-1]-vp1[0]]; rho1 += [rho[-1]-rho1[0]]
             qs1 += [qs[-1]-qs1[0]]; qp1 += [qp[-1]-qp1[0]]
             z += list(z1)
             vs += list(vs1); vp += list(vp1); rho += list(rho1); qs += list(qs1); qp += list(qp1)
-            grp += [refLayer.group]*len(z1)
+            grp += [refLayer.prop['Group']]*len(z1)
         return np.array(z),np.array(vs),np.array(vp),np.array(rho),np.array(qs),np.array(qp),grp
 
 
 class Model1D_Cascadia_Oceanic(Model1D):
     def seisPropGrids(self,refLayer=False):
-        z0 = -max(self.info['topo'],0)
-        hCrust = np.sum([l.parm['H'] if l.group == 'crust' else 0 for l in self.layers])
+        z0 = -max(self.info.get('topo',0),0)
+        hCrust = np.sum([l.parm['H'] if l.prop['Group'] == 'crust' else 0 for l in self.layers])
         z,vs,vp,rho,qs,qp,grp = [],[],[],[],[],[],[]
         for layer in self.layers:
-            layer._tmpInfo = {'z0':z0,'age':self.info['lithoAge'],'hCrust':hCrust}
-            z1,vs1,vp1,rho1,qs1,qp1 = layer.seisPropGrids
+            # layer._tmpInfo = {'z0':z0,'age':self.info['lithoAge'],'hCrust':hCrust}
+            z1,vs1,vp1,rho1,qs1,qp1 = layer.seisPropGrids(z0=z0,age=self.info['lithoAge'],hCrust=hCrust)
             z += list(z1+z0)
             vs += list(vs1); vp += list(vp1); rho += list(rho1); qs += list(qs1); qp += list(qp1)
-            grp += [layer.group]*len(z1)
+            grp += [layer.prop['Group']]*len(z1)
             z0 = z[-1]
         if refLayer:
             refLayer = self._refLayer.copy()
             refLayer.parm['Vs'][0] += vs[-1]
             refLayer.parm['Vs'][1] += vs[-1]
-            z1,vs1,vp1,rho1,qs1,qp1 = refLayer.seisPropGrids
+            z1,vs1,vp1,rho1,qs1,qp1 = refLayer.seisPropGrids()
             vs1 += [vs[-1]-vs1[0]]; vp1 += [vp[-1]-vp1[0]]; rho1 += [rho[-1]-rho1[0]]
             qs1 += [qs[-1]-qs1[0]]; qp1 += [qp[-1]-qp1[0]]
             z += list(z1+z0)
             vs += list(vs1); vp += list(vp1); rho += list(rho1); qs += list(qs1); qp += list(qp1)
-            grp += [refLayer.group]*len(z1)
+            grp += [refLayer.prop['Group']]*len(z1)
         return np.array(z),np.array(vs),np.array(vp),np.array(rho),np.array(qs),np.array(qp),grp
     def isgood(self):
         import scipy.signal
@@ -492,30 +510,37 @@ class Model1D_Cascadia_Oceanic(Model1D):
 
 
 if __name__ == '__main__':
-    mod = Model1D()
-    mod.loadYML('setting-Hongda.yml',{'topo':-2,'sedthk':0.5,'lithoAge':4.0})
-    # mod.plotProfileGrid();mod.show()
-    # mod = mod.perturb().perturb().perturb()
-    # mod.plotProfileGrid(ax=plt.gca());mod.show()
-    # mod = mod.reset()
-    # mod.plotProfileGrid(ax=plt.gca());mod.show()
-    # print(mod.toYML())
+    mod = Model1D_Cascadia_Oceanic()
+    mod.loadYML('cascadia-ocean.yml',{'topo':-2,'sedthk':0.5,'lithoAge':4.0})
+    mod.plotProfileGrid();mod.show()
+    mod = mod.perturb().perturb().perturb()
+    mod.plotProfileGrid(ax=plt.gca());mod.show()
+    mod = mod.reset()
+    mod.plotProfileGrid(ax=plt.gca());mod.show()
+    print(mod.toYML())
 
-    # print(mod._brownians(numberOnly=True))
-    # print(mod.forward())
-    # mod.info['refLayer'] = False
-    # print(mod.forward())
+    print(mod._brownians(numberOnly=True))
+    print(mod.forward())
+    mod.info['refLayer'] = False
+    print(mod.forward())
 
-    print(mod._brownians())
-    mod._loadMC([0.6,1.1,4.2,4.1,4.4,4.5])
-    print(mod._brownians())
 
-    ymlDict = mod.toYML()
-    modN = Model1D()
-    modN.loadYML(ymlDict)
 
-    modN.show()
-    mod.show()
 
-    modN.info
-    mod.info
+
+
+
+
+    # print(mod._brownians())
+    # mod._loadMC([0.6,1.1,4.2,4.1,4.4,4.5])
+    # print(mod._brownians())
+
+    # ymlDict = mod.toYML()
+    # modN = Model1D()
+    # modN.loadYML(ymlDict)
+
+    # modN.show()
+    # mod.show()
+
+    # modN.info
+    # mod.info

@@ -1,27 +1,27 @@
-Water_Ocean:
+OceanWater:
   H:    2
-Sediment_Cascadia_Ocean:
+OceanSediment_Cascadia:
   H:    [1,'rel_pos',100,0.1]
-Crust_Linear_Ocean:
+OceanCrust:
   H:    7
   Vs:  [[3.25, 'fixed'],
         [3.94, 'fixed']]
-Mantle_Therm_Bspline_Mix:
-  H:    [200,'total']
-  Vs:   [[0, 'abs', 0.4, 0.02],
-         [-0.5, 'abs', 0.4, 0.02],
-         [-0.1, 'abs', 0.4, 0.02],
-         [0, 'abs', 0.2, 0.01]]
-  Age:  [4,'abs_pos',2,0.1]
-  # Age:  [4,'abs_pos',2,0.1]
-
-# Mantle_Bspline_Ocean_CascadiaQ:
+# Mantle_Therm_Bspline_Mix:
 #   H:    [200,'total']
-#   Vs:   [[4.4, 'rel', 15, 0.02],
-#         [4.1, 'rel', 10, 0.02],
-#         [4.2, 'rel', 10, 0.02],
-#         [4.4, 'rel', 10, 0.02],
-#         [4.5, 'rel', 5, 0.02]]
+#   Vs:   [[0, 'abs', 0.4, 0.02],
+#          [-0.5, 'abs', 0.4, 0.02],
+#          [-0.1, 'abs', 0.4, 0.02],
+#          [0, 'abs', 0.2, 0.01]]
+#   Age:  [4,'abs_pos',2,0.1]
+
+OceanMantle_CascadiaQ:
+  H:    [200,'total']
+  Vs:   [[4.4, 'rel', 15, 0.02],
+        [4.1, 'rel', 10, 0.02],
+        [4.2, 'rel', 10, 0.02],
+        [4.4, 'rel', 10, 0.02],
+        [4.5, 'rel', 5, 0.02]]
+  ThermAge:  4.0
 
 Info:
   ModelType: 'Cascadia_Oceanic'

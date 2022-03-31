@@ -10,18 +10,19 @@ class TherModel():
         pass
 
 class HSCM(TherModel):
-    def __init__(self,age,zdeps=np.linspace(0,200,200)) -> None:
+    def __init__(self, age, zdeps=np.linspace(0,200,200),rho0=3.43e3,Tp=1325) -> None:
         self.age   = age
         self.zdeps = zdeps
-        self.P     = self.calP()
-        self.T     = self.calT()
-    def calT(self):
+        self.P     = self._calP()
+        self.T     = self._calT(Tp)
+        self.rho    = self._calRho(rho0)
+    def _calT(self,Tp=1325):
         C2K = 273.15
         zdeps = self.zdeps
         age   = self.age
         ''' temperature calculated from half space cooling model, topography change ignored''' 
         from scipy.special import erf
-        T0 = 0; Tp = 1325; Da=0.4
+        T0 = 0; Da=0.4
         T_adiabatic = Tp + zdeps*Da
         theta = erf(zdeps*1e3/(2*np.sqrt(age*365*24*3600*1)))# suppose kappa=1e-6
         thetaD = np.diff(theta)/np.diff(zdeps)
@@ -36,9 +37,16 @@ class HSCM(TherModel):
         except:
             pass
         return T+C2K
-    def calP(self):  # in Pa
+    def _calP(self,rho=3.4e3):  # in Pa
         # change 3.2 to 3.4, the difference is comparable to 4Ma vs 4.1Ma at 30km
-        return 3.4e3*9.8*self.zdeps*1000   # 3.424 in https://doi.org/10.1029/2004JB002965
+        return rho*9.8*self.zdeps*1000   # 3.424 in https://doi.org/10.1029/2004JB002965
+    def _calRho(self,rho0=3.43e3,P0=6.5e9,T0=1200+273.15):
+        kappa,alpha = 1e-11,3e-5 # Pa^-1,K^-1
+        # P = rho0*9.8*self.zdeps*1000
+        P = self._calP()
+        T = self._calT()
+        rho = rho0*(1+kappa*(P-P0)-alpha*(T-T0))
+        return rho
 
 class seisModel():
     def __init__(self,therModel=None) -> None:
@@ -49,7 +57,34 @@ class seisModel():
     def loadThermal(self,therModel):
         pass
 
-class OceanSeisRitz(seisModel):
+
+
+
+
+class OceanSeisBass(seisModel): # https://doi.org/10.1029/RF002p0045 https://doi.org/10.1016/j.pepi.2010.09.005
+    def loadThermal(self, therModel):
+        Ju = 1/(66.5-0.0136*(therModel.T-273.15-900)+1.8*(therModel.P/1e9-0.2))*1e-9
+        vs = 1/np.sqrt(therModel.rho*Ju)
+        self.zdeps = therModel.zdeps
+        self.vs    = vs
+class OceanSeisYaTa(seisModel):  # https://doi.org/10.1002/2016JB013316
+    ''' unrelaxed only!!! '''
+    def loadThermal(self, therModel):
+        Ju = 1/(72.45-0.01094*(therModel.T-273.15)+1.987*therModel.P/1e9)*1e-9
+        vs = 1/np.sqrt(therModel.rho*Ju)
+        self.zdeps = therModel.zdeps
+        self.vs    = vs
+class OceanSeisStix(seisModel): # https://doi.org/10.1029/2004JB002965
+    def loadThermal(self, therModel):
+        vs = 4.77+0.038*therModel.zdeps/29.80-0.000378*(therModel.T-300)
+        self.zdeps = therModel.zdeps
+        self.vs    = vs*1000
+
+
+
+
+
+class OceanSeisRitz(seisModel):  # https://doi.org/10.1111/j.1365-246X.2004.02254.x 
     def __init__(self,therModel=None) -> None:
         self.zdeps = None
         self.vs    = None
@@ -98,7 +133,7 @@ class OceanSeisRitz(seisModel):
             K   = 1/2 * ((ws*Ks).sum(axis=1)  + 1/((ws/Ks).sum(axis=1)))
             return mu,K,rho
 
-        X = 0.1; ws = [0.75,0.21,0.035,0,0.005]
+        X = 0.1; ws = [0.75,0.21,0.035,0,0.005]  # https://doi.org/10.1016/0012-821X(84)90076-1
         mu,K,rho = TPX2_rho_mu_K(T,P,X,list(self.elasticParas.values()),ws)
         # plt.figure(figsize=[5.5,8])
         # plt.plot(rho,self.zdeps)
@@ -112,20 +147,21 @@ class OceanSeisRitz(seisModel):
         self.zdeps = therMod.zdeps
         self.vs    = self._pt2vs(therMod.P/1e9,therMod.T)
 
-class OceanSeisRuan(seisModel):
-    def __init__(self,therModel=None) -> None:
+class OceanSeisRuan(seisModel):  # https://doi.org/10.1016/j.epsl.2018.05.035
+    def __init__(self,therModel=None,damp=True,YaTaJu=False) -> None:
         self.zdeps = None
         self.vs    = None
         if therModel is not None:
-            self.loadThermal(therModel)
-    def loadThermal(self, therModel):
+            self.loadThermal(therModel,damp,YaTaJu)
+    def loadThermal(self, therModel,damp=True,YaTaJu=False):
         Ju = 1/(72.45-0.01094*(therModel.T-273.15)+1.75*therModel.P/1e9)*1e-9
-        # Ju = 1/OceanSeisRitz(therModel)._mu
-        J1,J2 = self._calQ_ruan(therModel.T,therModel.P,period=1,damp=True)
+        if YaTaJu:
+            Ju = 1/(72.45-0.01094*(therModel.T-273.15)+1.987*therModel.P/1e9)*1e-9
+        J1,J2 = self._calQ_ruan(therModel.T,therModel.P,period=50,damp=damp)
         self.zdeps = therModel.zdeps
-        self.vs    = 1/np.sqrt(3.4e3*Ju*J1)
+        self.vs    = 1/np.sqrt(therModel.rho*Ju*J1)
+        self.vs_unrelaxed = 1/np.sqrt(therModel.rho*Ju)
         self.qs    = J1/J2
-
     @staticmethod
     def _calQ_ruan(T,P,period,damp=True):
         ''' calculate quality factor follow Ruan+(2018) 
@@ -207,12 +243,26 @@ class OceanSeisRuan(seisModel):
 
         return J1,J2
 
+
+
+
+
 if __name__ == '__main__':
     from Triforce.pltHead import *
-    therMod = HSCM(age=4.0)
-    seisMod = OceanSeisRitz(therMod)
-    seisMod_Ruan = OceanSeisRuan(therMod)
+
+    zdeps = np.linspace(0,200,1000)
+    therMod = HSCM(4,zdeps)
+    seisModRitz = OceanSeisRitz(therMod)
+    seisModRuan = OceanSeisRuan(therMod)
+    seisModYaTa = OceanSeisRuan(therMod,YaTaJu=True)
+    seisModBass = OceanSeisBass(therMod)
+    seisModStix = OceanSeisStix(therMod)
+
     plt.figure(figsize=[5.5,8])
-    plt.plot(seisMod.vs,seisMod.zdeps)
-    plt.plot(seisMod_Ruan.vs,seisMod_Ruan.zdeps)
+    plt.plot(seisModRitz.vs,zdeps,label='Rtizwoller')
+    plt.plot(seisModRuan.vs,zdeps,label='Ruan')
+    plt.plot(seisModRuan.vs_unrelaxed,zdeps,label='Ruan Unrelaxed')
+    plt.plot(seisModYaTa.vs,zdeps,label='YaTa')
+    plt.plot(seisModYaTa.vs_unrelaxed,zdeps,label='YaTa Unrelaxed')
+    plt.legend()
     plt.gca().invert_yaxis()

@@ -155,44 +155,43 @@ def loadSetting(ymlFile='setting-Hongda.yml',localInfo={}):
     return layerDict,info
 
 
-
-
-
-
-
-
-
-
-
-def buildModel1D(ymlFile,localInfo={}):
-    if type(ymlFile) is dict:
-        rawDict = ymlFile
-    else:
-        import yaml
-        with open(ymlFile, 'r') as f:
-            rawDict = yaml.load(f,Loader=yaml.FullLoader)
-    modelType = rawDict['Info'].get('ModelType','Cascadia_Oceanic')
-    if modelType == 'General_Model':
-        mod = Model1D()
-        mod.loadYML(rawDict,localInfo)
-        return mod
-    if modelType == 'Cascadia_Oceanic':
-        mod = Model1D_Cascadia_Oceanic()
-        mod.loadYML(rawDict,localInfo)
-        return mod
-    else:
-        raise ValueError(f'Error: ModelType {modelType} not supported!')
-
-
+# def buildModel1D(ymlFile,localInfo={}):
+#     if type(ymlFile) is dict:
+#         rawDict = ymlFile
+#     else:
+#         import yaml
+#         with open(ymlFile, 'r') as f:
+#             rawDict = yaml.load(f,Loader=yaml.FullLoader)
+#     modelType = rawDict['Info'].get('ModelType','Cascadia_Oceanic')
+#     if modelType == 'General_Model':
+#         mod = Model1D()
+#         mod.loadYML(rawDict,localInfo)
+#         return mod
+#     if modelType == 'Cascadia_Oceanic':
+#         mod = Model1D_Cascadia_Oceanic()
+#         mod.loadYML(rawDict,localInfo)
+#         return mod
+#     else:
+#         raise ValueError(f'Error: ModelType {modelType} not supported!')
 
 class Model1D():
     def __init__(self,layers=[],info=None) -> None:
         self._layers = layers
         self.info   = info
     def loadYML(self,ymlFile,localInfo={}):
-        layerDict,info = loadSetting(ymlFile,localInfo)
-        self.info = info
-        self._layers = [buildSeisLayer(parm,typeID) for typeID,parm in layerDict.items()]
+        # 1. load yml to be layers:Dict, info:Dict
+        # 2. use information from localInfo to update layers, this should be a sepearate method
+        # 3. add localInfo to info
+        # 4. instanciate self._layers
+        pass
+    def _loadLocalInfo(self,layers,localInfo):
+        self.info.update(localInfo)
+        # to be specified based on requriement
+        return layers
+    # def loadYML(self,ymlFile,localInfo={}):
+    #     layerDict,info = loadSetting(ymlFile,localInfo)
+    #     self.info = info
+    #     self._layers = [buildSeisLayer(parm,typeID) for typeID,parm in layerDict.items()]
     def toYML(self):
         def checker(v):
             return type(v) == BrownianVar
@@ -215,7 +214,6 @@ class Model1D():
                             v[i] = v[i]._setValue(mc[mc_ind]);mc_ind += 1
                     layer.parm[k] = v
     def _brownians(self,numberOnly=True):
-        
         brownians = []
         for layer in self.layers:
             for k,v in layer.parm.items():
@@ -352,9 +350,8 @@ class Model1D_Puregird(Model1D):
                 parmLayer[k] = v[I]
             self._layers.append(Seis_Puregrid(parmLayer,grp))
         self.info = info
-    @property
-    def layers(self):
-        return self._layers
+    def loadYML(self, ymlFile, localInfo={}):
+        raise AttributeError('"Model1D_Puregird" object has no method "loadYML"')
     def seisPropGrids(self,refLayer=False):
         z,vs,vp,rho,qs,qp,grp = [],[],[],[],[],[],[]
         for layer in self.layers:
@@ -373,9 +370,14 @@ class Model1D_Puregird(Model1D):
             vs += list(vs1); vp += list(vp1); rho += list(rho1); qs += list(qs1); qp += list(qp1)
             grp += [refLayer.prop['Group']]*len(z1)
         return np.array(z),np.array(vs),np.array(vp),np.array(rho),np.array(qs),np.array(qp),grp
-
+    @property
+    def layers(self):
+        return self._layers
 
 class Model1D_Cascadia_Oceanic(Model1D):
+    def _loadLocalInfo(self, layers, localInfo):
+        super()._loadLocalInfo(layers, localInfo)
+        # for each possible term in localInfo, update the related layer(s).parm
     def seisPropGrids(self,refLayer=False):
         z0 = -max(self.info.get('topo',0),0)
         hCrust = np.sum([l.parm['H'] if l.prop['Group'] == 'crust' else 0 for l in self.layers])

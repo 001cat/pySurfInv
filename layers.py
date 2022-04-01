@@ -406,7 +406,38 @@ oldTypeDict = { # to convert previous layer notes to new layer type id, type_mty
         # 'crust_Bspline_land'      : 'Crust_Bspline_Land'
     }
 
-def buildSeisLayer(parm,typeID):
+def buildSeisLayer(parm,typeID,BrownianConvert=False):
+    if BrownianConvert:
+        from brownian import BrownianVar
+        from pySurfInv.utils import _dictIterModifier
+        def isNumeric(v):
+            try:
+                float(v);return True
+            except:
+                return False
+        def toBrownian(v):
+            if v[1] in ('fixed','total'):
+                return v[0]
+            elif v[1] == 'abs':
+                return BrownianVar(v[0],v[0]-v[2],v[0]+v[2],v[3])
+            elif v[1] == 'abs_pos':
+                return BrownianVar(v[0],max(v[0]-v[2],0),v[0]+v[2],v[3])
+            elif v[1] == 'rel':
+                return BrownianVar(v[0],v[0]*(1-v[2]/100),v[0]*(1+v[2]/100),v[3])
+            elif v[1] == 'rel_pos':
+                return BrownianVar(v[0],max(v[0]*(1-v[2]/100),0),v[0]*(1+v[2]/100),v[3])
+            elif isNumeric(v[1]):
+                return BrownianVar(v[0],v[1],v[2],v[3])
+            else:
+                raise ValueError(f'Error: Wrong checker??? v={v}')
+        def isBrownian(v):
+            if type(v) is list:
+                if len(v)>=2 and v[1] in ('fixed','total','abs','abs_pos','rel','rel_pos'):
+                    return True
+                elif len(v) == 4 and isNumeric(v[1]):
+                    return True
+            return False
+        parm = _dictIterModifier(parm,isBrownian,toBrownian)
     try:
         seisLayer = typeDict[typeID](parm)
         return seisLayer

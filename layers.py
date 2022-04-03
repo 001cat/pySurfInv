@@ -40,13 +40,10 @@ class SeisLayer():
         self.parm = parm
         self.prop = {'Group':None,'LayerName':None}
         self.prop.update(prop)
-        # self.group  = None
-        # self._SeisLayerID = None
-        # self._tmpInfo = {}
     def seisPropGrids(self,**kwargs):
         return None,None,None,None,None,None
     def seisPropLayers(self,**kwargs):
-        z,vs,vp,rho,qs,qp = self.seisPropGrids(kwargs)
+        z,vs,vp,rho,qs,qp = self.seisPropGrids(**kwargs)
         h = np.diff(z)
         vs  = (vs[1:] + vs[:-1])/2
         vp  = (vp[1:] + vp[:-1])/2
@@ -72,6 +69,12 @@ class SeisLayer():
         return self._perturb(reset=True)
     def copy(self):
         return deepcopy(self)
+    def H(self,**kwargs):
+        if self.parm.get('BottomDepth',None) == None:
+            H = self.parm['H']
+        else:
+            H = self.parm['BottomDepth'] - kwargs['topDepth']
+        return H
 
 class PureLayer(SeisLayer):
     def __init__(self, parm, prop={}) -> None:
@@ -82,6 +85,8 @@ class PureLayer(SeisLayer):
         h,vs,vp,rho,qs,qp = self.parm['h'],self.parm['vs'],self.parm['vp'],\
                             self.parm['rho'],self.parm['qs'],self.parm['qp']
         return np.array(h),np.array(vs),np.array(vp),np.array(rho),np.array(qs),np.array(qp)
+    def H(self,**kwargs):
+        return self.parm['h'].sum()
 
 class PureGrid(SeisLayer):
     def __init__(self, parm, prop={}) -> None:
@@ -91,6 +96,8 @@ class PureGrid(SeisLayer):
         z,vs,vp,rho,qs,qp = self.parm['z'],self.parm['vs'],self.parm['vp'],\
                             self.parm['rho'],self.parm['qs'],self.parm['qp']
         return np.array(z),np.array(vs),np.array(vp),np.array(rho),np.array(qs),np.array(qp)
+    def H(self, **kwargs):
+        return self.parm['z'][-1] - self.parm['z'][0]
 
 class OceanWater(SeisLayer):
     def __init__(self,parm,prop={}) -> None:
@@ -99,7 +106,7 @@ class OceanWater(SeisLayer):
         self.parm['Vs'] = 0
     def seisPropGrids(self,**kwargs):
         N   = 1
-        z   = np.array([0,self.parm['H']])
+        z   = np.array([0,self.H(**kwargs)])
         vs  = np.array([0]     * (N+1))
         vp  = np.array([1.475] * (N+1))
         rho = np.array([1.027] * (N+1))
@@ -111,19 +118,18 @@ class OceanWater(SeisLayer):
 
 class SeisLayerVs(SeisLayer):
     def seisPropGrids(self,**kwargs):
-        N   = self._nFineLayers()
-        z   = np.linspace(0, self.parm['H'], N+1)
+        N   = self._nFineLayers(**kwargs)
+        z   = np.linspace(0, self.H(**kwargs), N+1)
         vs = self._calVs(z,**kwargs)
         vp,rho,qs,qp = self._calOthers(z,vs,**kwargs)
         return z,vs,vp,rho,qs,qp
-    def _nFineLayers(self):
+    def _nFineLayers(self,**kwargs):
         pass
     def _calVs(self,z,**kwargs):
         pass
     def _calOthers(self,z,vs,**kwargs):
         pass
     def _bspl(self,z,nBasis):
-        # nBasis = len(self.parm['Vs'])
         deg = 3 + (nBasis>=4)
         if hasattr(self,'_bspl_') and (nBasis == self._bspl_.nBasis) and \
            (deg == self._bspl_.deg) and (len(z) == self._bspl_.n):
@@ -136,7 +142,7 @@ class OceanSediment(SeisLayerVs):
     def __init__(self,parm,prop={}) -> None:
         super().__init__(parm,prop)
         self.prop.update({'LayerName':'OceanSediment','Group':'sediment'})
-    def _nFineLayers(self):
+    def _nFineLayers(self,**kwargs):
         return 1
     def _calVs(self,z,**kwargs):
         return np.array([self.parm['Vs']] * len(z))
@@ -151,17 +157,17 @@ class OceanSediment_Prism(OceanSediment):
     def __init__(self,parm,prop={}) -> None:
         super().__init__(parm,prop)
         self.prop.update({'LayerName':'OceanSediment_Prism','Group':'sediment'})
-    def _nFineLayers(self):
-        return  min(max(int(round(self.parm['H']/2)),2),10)
+    def _nFineLayers(self,**kwargs):
+        return  min(max(int(round(self.H(**kwargs)/2)),2),10)
     def _calVs(self, z, **kwargs):
-        return np.linspace(0, self.parm['H'], len(z))
+        return np.linspace(0, self.H(**kwargs), len(z))
 
 class OceanCrust(SeisLayerVs):
     def __init__(self,parm,prop={}) -> None:
         super().__init__(parm,prop)
         self.prop.update({'LayerName':'OceanCrust','Group':'crust'})
-    def _nFineLayers(self):
-        return min(max(int(round(self.parm['H']/2)),2),10)
+    def _nFineLayers(self,**kwargs):
+        return min(max(int(round(self.H(**kwargs)/2)),2),10)
     def _calVs(self, z, **kwargs):
         return np.linspace(self.parm['Vs'][0],self.parm['Vs'][1],len(z))
     def _calOthers(self, z, vs, **kwargs):
@@ -175,8 +181,8 @@ class OceanCrust_Prism(OceanCrust):
     def __init__(self,parm,prop={}) -> None:
         super().__init__(parm,prop)
         self.prop.update({'LayerName':'OceanCrust_Prism','Group':'crust'})
-    def _nFineLayers(self):
-        H = self.parm['H']
+    def _nFineLayers(self,**kwargs):
+        H = self.H(**kwargs)
         if H >= 150:
             N = 60
         elif H > 60:
@@ -196,8 +202,8 @@ class OceanMantle(SeisLayerVs):
     def __init__(self,parm,prop={}) -> None:
         super().__init__(parm,prop)
         self.prop.update({'LayerName':'OceanMantle','Group':'mantle'})
-    def _nFineLayers(self):
-        H = self.parm['H']
+    def _nFineLayers(self,**kwargs):
+        H = self.H(**kwargs)
         if H >= 150:
             N = 60
         elif H > 60:
@@ -223,10 +229,10 @@ class LandSediment(SeisLayerVs):
     def __init__(self,parm,prop={}) -> None:
         super().__init__(parm,prop)
         self.prop.update({'LayerName':'LandSediment','Group':'sediment'})
-    def _nFineLayers(self):
+    def _nFineLayers(self,**kwargs):
         return 1
     def _calVs(self,z,**kwargs):
-        return np.array([self.parm['Vs']] * len(z))
+        return np.linspace(self.parm['Vs'][0],self.parm['Vs'][1],len(z))
     def _calOthers(self, z, vs, **kwargs):
         vp  = vs*2.0
         rho = 1.22679 + 1.53201*vs - 0.83668*vs*vs + 0.20673*vs**3 - 0.01656*vs**4
@@ -238,8 +244,8 @@ class LandCrust(SeisLayerVs):
     def __init__(self,parm,prop={}) -> None:
         super().__init__(parm,prop)
         self.prop.update({'LayerName':'LandCrust','Group':'crust'})
-    def _nFineLayers(self):
-        H = self.parm['H']
+    def _nFineLayers(self,**kwargs):
+        H = self.H(**kwargs)
         if H >= 150:
             N = 60
         elif H > 60:
@@ -265,7 +271,7 @@ class ReferenceMantle(OceanMantle):
     def __init__(self,parm,prop={}) -> None:
         super().__init__(parm,prop)
         self.prop.update({'LayerName':'ReferenceMantle','Group':'mantle'})
-    def _nFineLayers(self):
+    def _nFineLayers(self,**kwargs):
         return 20
     def _calVs(self, z, **kwargs):
         return np.linspace(self.parm['Vs'][0],self.parm['Vs'][1],len(z))
@@ -274,70 +280,22 @@ class ReferenceMantle(OceanMantle):
 # Cascadia Specified
 class OceanSediment_Cascadia(OceanSediment):
     def _calVs(self, z, **kwargs):
-        vs = (0.02*self.parm['H']**2+1.27*self.parm['H']+0.29*0.1)/(self.parm['H']+0.29)
+        vs = (0.02*self.H(**kwargs)**2+1.27*self.H(**kwargs)+0.29*0.1)/(self.H(**kwargs)+0.29)
         return np.array([vs]* len(z))
 
 class OceanMantle_CascadiaQ(OceanMantle):
-    def _calOthers(self, z, vs, z0=None, age=None, **kwargs):
+    def _calOthers(self, z, vs, topDepth=None, **kwargs):
         vp,rho,qs,qp = super()._calOthers(z, vs, **kwargs)
         from pySurfInv.OceanSeis import OceanSeisRuan,HSCM
-        seisMod = OceanSeisRuan(HSCM(age=max(1e-3,age),zdeps=z0+z))
+        seisMod = OceanSeisRuan(HSCM(age=max(1e-3,self.parm['ThermAge']),zdeps=topDepth+z))
         qs = seisMod.qs;qs[qs>5000] = 5000
         return vp,rho,qs,qp
-# class Seis_Mantle_Bspline_Ocean_CascadiaQ(Seis_Mantle_Bspline_Ocean):
-#     @property
-#     def z0(self):
-#         return None if 'z0' not in self._tmpInfo.keys() else self._tmpInfo['z0']
-#     @property
-#     def age(self):
-#         return None if 'age' not in self._tmpInfo.keys() else self._tmpInfo['age']
-#     @property
-#     def seisPropGrids(self):
-#         z,vs,vp,rho,qs,qp = super().seisPropGrids
 
-#         from pySurfInv.OceanSeis import OceanSeisRuan,HSCM
-#         seisMod = OceanSeisRuan(HSCM(age=max(1e-3,self.age),zdeps=self.z0+z))
-#         qs = seisMod.qs;qs[qs>5000] = 5000
-#         return z,vs,vp,rho,qs,qp
-
-class Seis_Mantle_Therm_Bspline_Mix_Ocean(SeisLayer):
-    def __init__(self, parm) -> None:
-        super().__init__(parm)
-        self.group = 'mantle'
-    @property
-    def z0(self):
-        return None if 'z0' not in self._tmpInfo.keys() else self._tmpInfo['z0']
-    @property
-    def hCrust(self):
-        return None if 'hCrust' not in self._tmpInfo.keys() else self._tmpInfo['hCrust']
-    def bspl(self,z):
-        nBasis = len(self.parm['Vs'])+1
-        deg = 3 + (nBasis>=4)
-        if hasattr(self,'_bspl') and (nBasis == self._bspl.nBasis) and \
-        (deg == self._bspl.deg) and (len(z) == self._bspl.n):
-            pass
-        else:
-            self._bspl = BsplBasis(z,nBasis,deg)
-        return self._bspl
-    
-    @property
-    def seisPropGrids(self):
-        def getN(H):
-            if H >= 150:
-                N = 60
-            elif H > 60:
-                N = 30
-            elif H > 20:
-                N = 15
-            elif H > 10:
-                N = 10
-            else:
-                N = 5
-            return N
+class OceanMantle_ThermBsplineHybrid(OceanMantle_CascadiaQ):
+    def _calVs(self, z, topDepth, hCrust, **kwargs):
+        nBasis = len(self.parm['Vs']) + 1
         from pySurfInv.OceanSeis import OceanSeisRitz,OceanSeisRuan,HSCM
-        N   = getN(self.parm['H'])
-        z   = np.linspace(0, self.parm['H'], N+1)
-        seisMod = OceanSeisRitz(HSCM(age=max(1e-3,self.parm['Age']),zdeps=self.hCrust+z))
+        seisMod = OceanSeisRitz(HSCM(age=max(1e-3,self.parm['ThermAge']),zdeps=hCrust+z))
         def merge(x,y1,y2,xL=None,xK=None,xH=None,s=1):
             def transformD(x,xL=None,xK=None,xH=None):
                 d = np.zeros(x.shape)
@@ -357,25 +315,19 @@ class Seis_Mantle_Therm_Bspline_Mix_Ocean(SeisLayer):
             return y1*(1-lam)+y2*lam
         def meltStart(age):
             therMod = HSCM(age=age)
-            P = therMod.T/1e9
-            solidus = -5.1*P**2 + 92.5*P + 1120.6 + 273.15
+            P = therMod.P/1e9
+            solidus = -5.1*P**2 + 92.5*P + 1120.6 + 273.15  # damp solidus
             try:
-                return therMod.zdeps[therMod.T > 1.0*solidus][0]
+                return therMod.zdeps[therMod.T > 0.92*solidus][0]
             except:
                 return therMod.zdeps[-1]
         # vs = merge(z,seisMod.vs/1000,self.bspl(z)*np.array([0]+list(self.parm['Vs']))+seisMod.vs/1000,
         #            xL=10,xK=20,xH=40,s=1/3)
-        zMelt = meltStart(max(1e-3,self.parm['Age']))-self.hCrust
-        vs = merge(z,seisMod.vs/1000,self.bspl(z)*np.array([0]+list(self.parm['Vs']))+seisMod.vs/1000,
+        zMelt = meltStart(max(1e-3,self.parm['ThermAge']))-hCrust
+        vs = merge(z,seisMod.vs/1000,self._bspl(z,nBasis)*np.array([0]+list(self.parm['Vs']))+seisMod.vs/1000,
                    xL=zMelt,xK=zMelt+10,xH=zMelt+30,s=1/3)
-        vp  = vs*1.76
-        rho = 3.4268+(vs-4.5)/4.5
-        qs  = np.array( [150.]  * (N+1) )
-        qp  = np.array( [1400.] * (N+1) )
-
-        seisMod = OceanSeisRuan(HSCM(age=max(1e-3,self.parm['Age']),zdeps=self.z0+z))
-        qs = seisMod.qs;qs[qs>5000] = 5000
-        return z,vs,vp,rho,qs,qp
+        self._debug_zMelt = zMelt
+        return vs
 
 
 typeDict = {
@@ -393,22 +345,23 @@ typeDict = {
         # For Cascadia
         'OceanSediment_Cascadia'            : OceanSediment_Cascadia,
         'OceanMantle_CascadiaQ'             : OceanMantle_CascadiaQ,
-        'Mantle_Therm_Bspline_Mix'          : Seis_Mantle_Therm_Bspline_Mix_Ocean
+        'OceanMantle_ThermBsplineHybrid'    : OceanMantle_ThermBsplineHybrid
     }
 oldTypeDict = { # to convert previous layer notes to new layer type id, type_mtype_stype: new type ID
         'water_water_'              : 'OceanWater',
         'sediment_constant_'        : 'OceanSediment',
         'sediment_linear_'          : 'OceanSediment_Prism',
         'crust_linear_'             : 'OceanCrust',
-        'mantle_Bspline_'           : 'OceanMantle', # OceanMantle_CascadiaQ if Qmodel: Ruan2018, see models.loadSetting.dictReshape
+        'mantle_Bspline_'           : 'OceanMantle',
+        'mantle_Bspline_Ruan'       : 'OceanMantle_CascadiaQ',
         'crust_Bspline_'            : 'OceanCrust_Prism',
         'sediment_linear_land'      : 'LandSediment'
         # 'crust_Bspline_land'      : 'Crust_Bspline_Land'
     }
 
-def buildSeisLayer(parm,typeID,BrownianConvert=False):
+def buildSeisLayer(parm:dict,typeID,BrownianConvert=True) -> SeisLayer:
     if BrownianConvert:
-        from brownian import BrownianVar
+        from pySurfInv.brownian import BrownianVar
         from pySurfInv.utils import _dictIterModifier
         def isNumeric(v):
             try:
@@ -440,33 +393,36 @@ def buildSeisLayer(parm,typeID,BrownianConvert=False):
         parm = _dictIterModifier(parm,isBrownian,toBrownian)
     try:
         seisLayer = typeDict[typeID](parm)
-        return seisLayer
-    except:
-        raise ValueError()
+    except:  # old version
+        try:
+            mtype,stype = parm.get('mtype',''),parm.get('stype','')
+            typeID = oldTypeDict['_'.join([typeID,mtype,stype])]
+            parmNew = {}
+            for k,v in parm.items():
+                parmNew[k[0].upper()+k[1:]] = v
+            seisLayer = typeDict[typeID](parmNew)
+        except Exception as e:
+            raise ValueError(f'Error: Can not load seisLayer {typeID} {e}')
+    return seisLayer
     
 if __name__ == '__main__':
-    # from brownian import BrownianVar
-    # a = buildSeisLayer({'H':10,'Vs':[3.2,3.7]},'OceanCrust')
-    # b = buildSeisLayer({'H':10,'Vs':[
-    #     BrownianVar(3.2,3.1,3.3,0.02),
-    #     BrownianVar(3.7,3.5,3.9,0.02)
-    #     ]},'OceanCrust')
-    # c = b.copy()
+    from brownian import BrownianVar
+    a = buildSeisLayer({'H':10,'Vs':[3.2,3.7]},'OceanCrust')
+    b = buildSeisLayer({'H':10,'Vs':[
+        BrownianVar(3.2,3.1,3.3,0.02),
+        BrownianVar(3.7,3.5,3.9,0.02)
+        ]},'OceanCrust')
+    c = b.copy()
 
-    # a = buildSeisLayer({'H':200,'Vs':[0,0,0],'Age':4},'Mantle_Therm_Bspline_Mix')
-    # a.z0,a.hCrust = 7,7
-    # z,vs,vp,rho,qs,qp = a.seisPropGrids
-    # from pySurfInv.utils import plotGrid
-    # plotGrid(z,vs)
+    a = buildSeisLayer({'H':200,'Vs':[-0.3,-0.2,-0.1],'ThermAge':4},'OceanMantle_ThermBsplineHybrid')
+    z,vs,vp,rho,qs,qp = a.seisPropGrids(topDepth=7,hCrust=7)
+    from pySurfInv.utils import plotGrid
+    plotGrid(z,vs)
 
     from pySurfInv.utils import plotGrid
-    b = buildSeisLayer({'H':200,'Vs':[4.4,4.1,4.2,4.4,4.5]},'OceanMantle_CascadiaQ')
-    b.z0 = 7; b.age = 4
-    z1,_,_,_,qs1,_ = b.seisPropGrids
-    b.test = True
-    z2,_,_,_,qs2,_ = b.seisPropGrids
+    b = buildSeisLayer({'H':200,'Vs':[4.4,4.1,4.2,4.4,4.5],'ThermAge':4},'OceanMantle_CascadiaQ')
+    z1,_,_,_,qs1,_ = b.seisPropGrids(topDepth=7)
     fig = plotGrid(z1,qs1)
-    plotGrid(z2,qs2,fig=fig)
 
 
 

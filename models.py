@@ -28,170 +28,74 @@ def _calForward(inProfile,wavetype='Ray',periods=[5,10,20,40,60,80]):
         return None
     return cr0[:nper]
 
-def isNumeric(v):
-    try:
-        float(v);return True
-    except:
-        return False
 
-def loadSetting(ymlFile='setting-Hongda.yml',localInfo={}):
-    import yaml
-    from pySurfInv.layers import typeDict,oldTypeDict
-
-    def dictConvert(inDict):
-        from pySurfInv.utils import _dictIterModifier
-        def toBrownian(v):
-            if v[1] in ('fixed','total'):
-                return v[0]
-            elif v[1] == 'abs':
-                return BrownianVar(v[0],v[0]-v[2],v[0]+v[2],v[3])
-            elif v[1] == 'abs_pos':
-                return BrownianVar(v[0],max(v[0]-v[2],0),v[0]+v[2],v[3])
-            elif v[1] == 'rel':
-                return BrownianVar(v[0],v[0]*(1-v[2]/100),v[0]*(1+v[2]/100),v[3])
-            elif v[1] == 'rel_pos':
-                return BrownianVar(v[0],max(v[0]*(1-v[2]/100),0),v[0]*(1+v[2]/100),v[3])
-            elif isNumeric(v[1]):
-                return BrownianVar(v[0],v[1],v[2],v[3])
-            else:
-                raise ValueError(f'Error: Wrong checker??? v={v}')
-        def isBrownian(v):
-            if type(v) is list:
-                if len(v)>=2 and v[1] in ('fixed','total','abs','abs_pos','rel','rel_pos'):
-                    return True
-                elif len(v) == 4 and isNumeric(v[1]):
-                    return True
-            return False
-        return _dictIterModifier(inDict,isBrownian,toBrownian)
-
-    def dictReshape(inDict):
-        layers = {}
-        for k,v in inDict.items():
-            if k == 'Info':
-                info = v
-            elif k in typeDict.keys():      # yml file for point2
-                layers[k] = v
-            else:                           # for previous yml file
-                if 'Qmodel' in inDict['Info'].keys() and inDict['Info']['Qmodel'] == 'Ruan2018':
-                    oldTypeDict['mantle_Bspline_'] = 'OceanMantle_CascadiaQ'
-                mtype = '' if 'mtype' not in v.keys() else v['mtype']
-                stype = '' if 'stype' not in v.keys() else v['stype']
-                typeID = oldTypeDict['_'.join([k,mtype,stype])]
-                if typeID == 'OceanWater':
-                    layers[typeID] = {'H':v['h'],'Vs':0}
-                else:
-                    layers[typeID] = {'H':v['h'],'Vs':v['vs']}
-        return layers,info
-
-    def mergeLocalInfo(rawDict,info,localInfo):
-        from copy import deepcopy
-        mergedDict = deepcopy(rawDict)
-
-        keys  = [k for k in rawDict.keys()]
-
-        def camel_case_split(str):
-            start_idx = [i for i, e in enumerate(str)
-                        if e.isupper()] + [len(str)]
-            start_idx = [0] + start_idx
-            return [str[x: y] for x, y in zip(start_idx, start_idx[1:])] 
-        types = [camel_case_split(k.split('_')[0])[2].lower() for k in keys]
-        print(types)
-
-        if 'topo' in localInfo.keys():
-            info['topo'] = localInfo['topo']
-        # if 'topo' in info.keys():
-            waterH = max(-info['topo'],0)
-            if waterH > 0 and 'water' in types:
-                try:
-                    mergedDict[keys[types.index('water')]]['H'][0] = waterH
-                except:
-                    mergedDict[keys[types.index('water')]]['H'] = waterH
-            elif waterH == 0 and 'water' in types:
-                del mergedDict[keys[types.index('water')]]
-
-        if 'sedthk' in localInfo.keys():
-            info['sedthk'] = localInfo['sedthk']
-        # if 'sedthk' in info.keys():
-            try:
-                mergedDict[keys[types.index('sediment')]]['H'][0] = info['sedthk']
-            except:
-                mergedDict[keys[types.index('sediment')]]['H'] = info['sedthk']
-        
-        if 'crsthk' in localInfo.keys():
-            info['crsthk'] = localInfo['crsthk']
-        # if 'crsthk' in info.keys():
-            try:
-                mergedDict[keys[types.index('crust')]]['H'][0] = info['crsthk']
-            except:
-                mergedDict[keys[types.index('crust')]]['H'] = info['crsthk']
-        
-        if 'lithoAge' in localInfo.keys():
-            info['lithoAge'] = localInfo['lithoAge']
-            try:
-                mergedDict[keys[types.index('mantle')]]['Age'][0] = info['lithoAge']
-            except:
-                mergedDict[keys[types.index('mantle')]]['Age'] = info['lithoAge']
-
-
-        return mergedDict,info
-    
+def buildModel1D(ymlFile,localInfo={}):
     if type(ymlFile) is dict:
         rawDict = ymlFile
     else:
+        import yaml
         with open(ymlFile, 'r') as f:
             rawDict = yaml.load(f,Loader=yaml.FullLoader)
-
-    rawDict,info = dictReshape(rawDict)
-    mergedDict,info = mergeLocalInfo(rawDict,info,localInfo)
-    layerDict = dictConvert(mergedDict)
-
-    # if 'total' used in last layer's H
-    try:
-        if list(rawDict.values())[-1]['H'][1].lower() == 'total':
-            info['TotalH'] = list(rawDict.values())[-1]['H'][0]
-    except:
-        pass
-
-    return layerDict,info
-
-
-# def buildModel1D(ymlFile,localInfo={}):
-#     if type(ymlFile) is dict:
-#         rawDict = ymlFile
-#     else:
-#         import yaml
-#         with open(ymlFile, 'r') as f:
-#             rawDict = yaml.load(f,Loader=yaml.FullLoader)
-#     modelType = rawDict['Info'].get('ModelType','Cascadia_Oceanic')
-#     if modelType == 'General_Model':
-#         mod = Model1D()
-#         mod.loadYML(rawDict,localInfo)
-#         return mod
-#     if modelType == 'Cascadia_Oceanic':
-#         mod = Model1D_Cascadia_Oceanic()
-#         mod.loadYML(rawDict,localInfo)
-#         return mod
-#     else:
-#         raise ValueError(f'Error: ModelType {modelType} not supported!')
+    modelType = rawDict['Info'].get('ModelType','Cascadia_Oceanic')
+    
+    if modelType == 'General_Model':
+        mod = Model1D()
+    elif modelType == 'Cascadia_Oceanic':
+        mod = Model1D_Cascadia_Oceanic()
+    else:
+        raise ValueError(f'Error: ModelType {modelType} not supported!')
+    mod.loadYML(rawDict,localInfo)
+    return mod
 
 class Model1D():
     def __init__(self,layers=[],info=None) -> None:
         self._layers = layers
         self.info   = info
     def loadYML(self,ymlFile,localInfo={}):
+        if type(ymlFile) is not dict:
+            import yaml
+            with open(ymlFile, 'r') as f:
+                ymlFile = yaml.load(f,Loader=yaml.FullLoader)
+        ymlD = deepcopy(ymlFile)
+        self.info = ymlD.pop('Info')
+
+        # to be compatible
+        if self.info.get('Qmodel',None) == 'Ruan2018':
+            for k,v in ymlD.items():
+                if '_'.join((k,v['mtype'],v.get('stype',''))) == 'mantle_Bspline_':
+                    v['stype'] = 'Ruan'
+                    v['ThermAge'] = self.info['lithoAge']
+        for k,v in ymlD.items():
+            for par in v.keys():
+                try:
+                    if par.upper() == 'H' and v[par][1].lower() == 'total':
+                        v['BottomDepth'] = v.pop(par)[0]
+                        break
+                except:
+                    continue
+        layersD = self._loadLocalInfo(ymlD,localInfo)
+        self._layers = [buildSeisLayer(parm,typeID) for typeID,parm in layersD.items()]
         # 1. load yml to be layers:Dict, info:Dict
-        # 2. use information from localInfo to update layers, this should be a sepearate method
-        # 3. add localInfo to info
+        # 1.1 to be compatible with previous version
+            # if 'Qmodel' in inDict['Info'].keys() and inDict['Info']['Qmodel'] == 'Ruan2018':
+            #     oldTypeDict['mantle_Bspline_'] = 'OceanMantle_CascadiaQ'
+            # set stype = 'Ruan'
+        # 1.2 to be compatible
+            # change 'H'/'h': [xxx,'total'] to be 'BottomDepth': xxx
+        # 2. use information from localInfo to update layers, and add all those information to info, this should be a sepearate method
         # 4. instanciate self._layers
-        pass
-    def _loadLocalInfo(self,layers,localInfo):
+
+    def _loadLocalInfo(self,layersD,localInfo):
         self.info.update(localInfo)
-        # to be specified based on requriement
-        return layers
+        '''
+        To Be Specified in Child Class: how local information modifies layers
+        '''
+        return layersD
     # def loadYML(self,ymlFile,localInfo={}):
     #     layerDict,info = loadSetting(ymlFile,localInfo)
     #     self.info = info
     #     self._layers = [buildSeisLayer(parm,typeID) for typeID,parm in layerDict.items()]
+
     def toYML(self):
         def checker(v):
             return type(v) == BrownianVar
@@ -199,53 +103,27 @@ class Model1D():
             return [v.v,v.vmin,v.vmax,v.step]
         ymlDict = {}
         for layer in self.layers:
-            ymlDict[layer._SeisLayerID] = _dictIterModifier(layer.parm,checker,modifier)
+            ymlDict[layer.prop['LayerName']] = _dictIterModifier(layer.parm,checker,modifier)
         ymlDict['Info'] = self.info
         return deepcopy(ymlDict)
-    def _loadMC(self,mc): 
-        mc_ind = 0
-        for layer in self.layers:
-            for k,v in layer.parm.items():
-                if type(v) == BrownianVar:
-                    layer.parm[k] = v._setValue(mc[mc_ind]);mc_ind += 1
-                elif type(v) == list:
-                    for i in range(len(v)):
-                        if type(v[i]) == BrownianVar:
-                            v[i] = v[i]._setValue(mc[mc_ind]);mc_ind += 1
-                    layer.parm[k] = v
-    def _brownians(self,numberOnly=True):
-        brownians = []
-        for layer in self.layers:
-            for k,v in layer.parm.items():
-                if type(v) is list:
-                    for e in v:
-                        if type(e) is BrownianVar:
-                            brownians.append([float(e),layer.prop['Group'],k])
-                else:
-                    if type(v) is BrownianVar:
-                        brownians.append([float(v),layer.prop['Group'],k])
-        if numberOnly:
-            brownians = [v[0] for v in brownians]
-        return brownians
-    def _dump(self,index,target,preInfo=[]):
-        preInfo.extend(self._brownians())
-        target[index] = preInfo
 
     def seisPropGrids(self,refLayer=False):
+        z0 = -max(self.info.get('topo',0),0) #!!! encapsulate these param of seisPropGrids into one function
         z,vs,vp,rho,qs,qp,grp = [],[],[],[],[],[],[]
         for layer in self.layers:
-            z1,vs1,vp1,rho1,qs1,qp1 = layer.seisPropGrids()
-            z += list(z1)
+            z1,vs1,vp1,rho1,qs1,qp1 = layer.seisPropGrids(topDepth=z0)
+            z += list(z1+z0)
             vs += list(vs1); vp += list(vp1); rho += list(rho1); qs += list(qs1); qp += list(qp1)
             grp += [layer.prop['Group']]*len(z1)
+            z0 = z[-1]
         if refLayer:
             refLayer = self._refLayer.copy()
             refLayer.parm['Vs'][0] += vs[-1]
             refLayer.parm['Vs'][1] += vs[-1]
-            z1,vs1,vp1,rho1,qs1,qp1 = refLayer.seisPropGrids()
+            z1,vs1,vp1,rho1,qs1,qp1 = refLayer.seisPropGrids(topDepth=z0)
             vs1 += [vs[-1]-vs1[0]]; vp1 += [vp[-1]-vp1[0]]; rho1 += [rho[-1]-rho1[0]]
             qs1 += [qs[-1]-qs1[0]]; qp1 += [qp[-1]-qp1[0]]
-            z += list(z1)
+            z += list(z1+z0)
             vs += list(vs1); vp += list(vp1); rho += list(rho1); qs += list(qs1); qp += list(qp1)
             grp += [refLayer.prop['Group']]*len(z1)
         return np.array(z),np.array(vs),np.array(vp),np.array(rho),np.array(qs),np.array(qp),grp
@@ -266,30 +144,6 @@ class Model1D():
             print(f'Warning: Forward not complete! Model listed below:')
             self.show()
         return pred
-
-    def perturb(self,isgood=None):
-        if isgood is None:
-            def isgood(model):
-                return model.isgood()
-        for i in range(1000):
-            newModel = self.copy()
-            newModel._layers = [l._perturb() for l in self.layers]
-            if isgood(newModel):
-                return newModel
-        return self.reset()
-    def reset(self,isgood=None):
-        if isgood is None:
-            def isgood(model):
-                return model.isgood()
-        for i in range(1000):
-            newModel = newModel = self.copy()
-            newModel._layers = [l._reset() for l in self.layers]
-            if isgood(newModel):
-                return newModel
-        self.show()
-        raise RuntimeError(f'Error: Cound not find a good model through reset.')
-    def isgood(self):
-        return True
 
     def value(self,zdeps,type='vs'):
         if type != 'vs': 
@@ -324,20 +178,15 @@ class Model1D():
         return buildSeisLayer({'H':300,'Vs':[0,0.35/200*300]},'ReferenceMantle')
     @property
     def layers(self):
-        if 'TotalH' in self.info.keys():
-            aboveSeaLevel = max(self.info.get('topo',0),0)
-            self._layers[-1].parm['H'] = self.info['TotalH'] + aboveSeaLevel - \
-                                         np.sum([l.parm['H'] for l in self._layers[:-1]])
         return self._layers
 
     def copy(self):
         from copy import deepcopy
         return deepcopy(self)
 
-
 class Model1D_Puregird(Model1D):
     def __init__(self, inProfiles, info=None) -> None:
-        from pySurfInv.layers import Seis_Puregrid
+        from pySurfInv.layers import PureGrid
         parm = {}
         parm['z'],parm['vs'],parm['vp'],\
         parm['rho'],parm['qs'],parm['qp'],\
@@ -348,7 +197,7 @@ class Model1D_Puregird(Model1D):
             parmLayer = {}
             for k,v in parm.items():
                 parmLayer[k] = v[I]
-            self._layers.append(Seis_Puregrid(parmLayer,grp))
+            self._layers.append(PureGrid(parmLayer,prop={'Group':grp}))
         self.info = info
     def loadYML(self, ymlFile, localInfo={}):
         raise AttributeError('"Model1D_Puregird" object has no method "loadYML"')
@@ -374,17 +223,107 @@ class Model1D_Puregird(Model1D):
     def layers(self):
         return self._layers
 
-class Model1D_Cascadia_Oceanic(Model1D):
-    def _loadLocalInfo(self, layers, localInfo):
-        super()._loadLocalInfo(layers, localInfo)
-        # for each possible term in localInfo, update the related layer(s).parm
+class Model1D_MCinv(Model1D):
+    def _loadMC(self,mc): 
+        mc_ind = 0
+        for layer in self.layers:
+            for k,v in layer.parm.items():
+                if type(v) == BrownianVar:
+                    layer.parm[k] = v._setValue(mc[mc_ind]);mc_ind += 1
+                elif type(v) == list:
+                    for i in range(len(v)):
+                        if type(v[i]) == BrownianVar:
+                            v[i] = v[i]._setValue(mc[mc_ind]);mc_ind += 1
+                    layer.parm[k] = v
+    def _brownians(self,numberOnly=True):
+        brownians = []
+        for layer in self.layers:
+            for k,v in layer.parm.items():
+                if type(v) is list:
+                    for e in v:
+                        if type(e) is BrownianVar:
+                            brownians.append([float(e),layer.prop['Group'],k])
+                else:
+                    if type(v) is BrownianVar:
+                        brownians.append([float(v),layer.prop['Group'],k])
+        if numberOnly:
+            brownians = [v[0] for v in brownians]
+        return brownians
+    def _dump(self,index,target,preInfo=[]):
+        preInfo.extend(self._brownians())
+        target[index] = preInfo
+
+    def perturb(self,isgood=None):
+        if isgood is None:
+            def isgood(model):
+                return model.isgood()
+        for i in range(1000):
+            newModel = self.copy()
+            newModel._layers = [l._perturb() for l in self.layers]
+            if isgood(newModel):
+                return newModel
+        return self.reset()
+    def reset(self,isgood=None):
+        if isgood is None:
+            def isgood(model):
+                return model.isgood()
+        for i in range(1000):
+            newModel = newModel = self.copy()
+            newModel._layers = [l._reset() for l in self.layers]
+            if isgood(newModel):
+                return newModel
+        self.show()
+        raise RuntimeError(f'Error: Cound not find a good model through reset.')
+    def isgood(self):
+        '''
+        To Be Specified in Child Class: prioris (prior constrains)
+        '''
+        return True
+
+class Model1D_Cascadia_Oceanic(Model1D_MCinv):
+    def _loadLocalInfo(self, layersD, localInfo):
+        super()._loadLocalInfo(layersD, localInfo)
+        layersD = deepcopy(layersD)
+        layersK = list(layersD.keys())
+        grps = [buildSeisLayer(parm,typeID).prop['Group'] for typeID,parm in layersD.items()]
+
+        topo = localInfo.get('topo',self.info.get('topo',0))
+        waterH = max(-topo,0)
+        if waterH > 0 and 'water' in grps:
+            try:
+                layersD[layersK[grps.index('water')]]['H'][0] = waterH
+            except:
+                layersD[layersK[grps.index('water')]]['H'] = waterH
+        elif waterH == 0 and 'water' in grps:
+            del layersD[layersK[grps.index('water')]]
+
+        if 'sedthk' in localInfo.keys():
+            try:
+                layersD[layersK[grps.index('sediment')]]['H'][0] = localInfo['sedthk']
+            except:
+                layersD[layersK[grps.index('sediment')]]['H'] = localInfo['sedthk']
+        
+        if 'crsthk' in localInfo.keys():
+            try:
+                layersD[layersK[grps.index('crust')]]['H'][0] = localInfo['crsthk']
+            except:
+                layersD[layersK[grps.index('crust')]]['H'] = localInfo['crsthk']
+        
+        if 'lithoAge' in localInfo.keys():
+            try:
+                layersD[layersK[grps.index('mantle')]]['ThermAge'][0] = localInfo['lithoAge']
+            except:
+                layersD[layersK[grps.index('mantle')]]['ThermAge'] = localInfo['lithoAge']
+        
+        return layersD
+
     def seisPropGrids(self,refLayer=False):
         z0 = -max(self.info.get('topo',0),0)
-        hCrust = np.sum([l.parm['H'] if l.prop['Group'] == 'crust' else 0 for l in self.layers])
+        hCrust = np.sum([l.H() if l.prop['Group'] == 'crust' else 0 for l in self.layers])
         z,vs,vp,rho,qs,qp,grp = [],[],[],[],[],[],[]
         for layer in self.layers:
             # layer._tmpInfo = {'z0':z0,'age':self.info['lithoAge'],'hCrust':hCrust}
-            z1,vs1,vp1,rho1,qs1,qp1 = layer.seisPropGrids(z0=z0,age=self.info['lithoAge'],hCrust=hCrust)
+            z1,vs1,vp1,rho1,qs1,qp1 = layer.seisPropGrids(topDepth=z0,hCrust=hCrust)
             z += list(z1+z0)
             vs += list(vs1); vp += list(vp1); rho += list(rho1); qs += list(qs1); qp += list(qp1)
             grp += [layer.prop['Group']]*len(z1)
@@ -514,35 +453,15 @@ class Model1D_Cascadia_Oceanic(Model1D):
 if __name__ == '__main__':
     mod = Model1D_Cascadia_Oceanic()
     mod.loadYML('cascadia-ocean.yml',{'topo':-2,'sedthk':0.5,'lithoAge':4.0})
-    mod.plotProfileGrid();mod.show()
-    mod = mod.perturb().perturb().perturb()
-    mod.plotProfileGrid(ax=plt.gca());mod.show()
-    mod = mod.reset()
-    mod.plotProfileGrid(ax=plt.gca());mod.show()
-    print(mod.toYML())
-
-    print(mod._brownians(numberOnly=True))
     print(mod.forward())
-    mod.info['refLayer'] = False
-    print(mod.forward())
+    # mod.plotProfileGrid();mod.show()
+    # mod = mod.perturb().perturb().perturb()
+    # mod.plotProfileGrid(ax=plt.gca());mod.show()
+    # mod = mod.reset()
+    # mod.plotProfileGrid(ax=plt.gca());mod.show()
+    # print(mod.toYML())
 
-
-
-
-
-
-
-
-    # print(mod._brownians())
-    # mod._loadMC([0.6,1.1,4.2,4.1,4.4,4.5])
-    # print(mod._brownians())
-
-    # ymlDict = mod.toYML()
-    # modN = Model1D()
-    # modN.loadYML(ymlDict)
-
-    # modN.show()
-    # mod.show()
-
-    # modN.info
-    # mod.info
+    # print(mod._brownians(numberOnly=True))
+    # print(mod.forward())
+    # mod.info['refLayer'] = False
+    # print(mod.forward())

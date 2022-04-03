@@ -287,8 +287,16 @@ class OceanMantle_CascadiaQ(OceanMantle):
     def _calOthers(self, z, vs, topDepth=None, **kwargs):
         vp,rho,qs,qp = super()._calOthers(z, vs, **kwargs)
         from pySurfInv.OceanSeis import OceanSeisRuan,HSCM
-        seisMod = OceanSeisRuan(HSCM(age=max(1e-3,self.parm['ThermAge']),zdeps=topDepth+z))
+        seisMod = OceanSeisRuan(HSCM(age=max(1e-3,self.parm['ThermAge']),zdeps=topDepth+z),period=1)
         qs = seisMod.qs;qs[qs>5000] = 5000
+        return vp,rho,qs,qp
+
+class OceanMantle_CascadiaQ_20220305SingleLayerClass(OceanMantle):
+    def _calOthers(self, z, vs, topDepth=None, **kwargs):
+        vp,rho,qs,qp = super()._calOthers(z, vs, **kwargs)
+        from pySurfInv.OceanSeis import OceanSeisRuan,HSCM
+        seisMod = OceanSeisRuan(HSCM(age=max(1e-3,self.parm['ThermAge']),zdeps=topDepth+z))
+        qs = seisMod.qs
         return vp,rho,qs,qp
 
 class OceanMantle_ThermBsplineHybrid(OceanMantle_CascadiaQ):
@@ -345,6 +353,7 @@ typeDict = {
         # For Cascadia
         'OceanSediment_Cascadia'            : OceanSediment_Cascadia,
         'OceanMantle_CascadiaQ'             : OceanMantle_CascadiaQ,
+        'OceanMantle_CascadiaQ_compatible'  : OceanMantle_CascadiaQ_20220305SingleLayerClass,
         'OceanMantle_ThermBsplineHybrid'    : OceanMantle_ThermBsplineHybrid
     }
 oldTypeDict = { # to convert previous layer notes to new layer type id, type_mtype_stype: new type ID
@@ -353,7 +362,7 @@ oldTypeDict = { # to convert previous layer notes to new layer type id, type_mty
         'sediment_linear_'          : 'OceanSediment_Prism',
         'crust_linear_'             : 'OceanCrust',
         'mantle_Bspline_'           : 'OceanMantle',
-        'mantle_Bspline_Ruan'       : 'OceanMantle_CascadiaQ',
+        'mantle_Bspline_Ruan'       : 'OceanMantle_CascadiaQ_compatible',
         'crust_Bspline_'            : 'OceanCrust_Prism',
         'sediment_linear_land'      : 'LandSediment'
         # 'crust_Bspline_land'      : 'Crust_Bspline_Land'

@@ -148,16 +148,16 @@ class OceanSeisRitz(seisModel):  # https://doi.org/10.1111/j.1365-246X.2004.0225
         self.vs    = self._pt2vs(therMod.P/1e9,therMod.T)
 
 class OceanSeisRuan(seisModel):  # https://doi.org/10.1016/j.epsl.2018.05.035
-    def __init__(self,therModel=None,damp=True,YaTaJu=False) -> None:
+    def __init__(self,therModel=None,damp=True,YaTaJu=False,period=50) -> None:
         self.zdeps = None
         self.vs    = None
         if therModel is not None:
-            self.loadThermal(therModel,damp,YaTaJu)
-    def loadThermal(self, therModel,damp=True,YaTaJu=False):
+            self.loadThermal(therModel,damp,YaTaJu,period)
+    def loadThermal(self, therModel,damp=True,YaTaJu=False,period=50):
         Ju = 1/(72.45-0.01094*(therModel.T-273.15)+1.75*therModel.P/1e9)*1e-9
         if YaTaJu:
             Ju = 1/(72.45-0.01094*(therModel.T-273.15)+1.987*therModel.P/1e9)*1e-9
-        J1,J2 = self._calQ_ruan(therModel.T,therModel.P,period=50,damp=damp)
+        J1,J2 = self._calQ_ruan(therModel.T,therModel.P,period=period,damp=damp)
         self.zdeps = therModel.zdeps
         self.vs    = 1/np.sqrt(therModel.rho*Ju*J1)
         self.vs_unrelaxed = 1/np.sqrt(therModel.rho*Ju)

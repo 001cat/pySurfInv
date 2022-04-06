@@ -295,7 +295,7 @@ class OceanMantle_CascadiaQ_20220305SingleLayerClass(OceanMantle):
     def _calOthers(self, z, vs, topDepth=None, **kwargs):
         vp,rho,qs,qp = super()._calOthers(z, vs, **kwargs)
         from pySurfInv.OceanSeis import OceanSeisRuan,HSCM
-        seisMod = OceanSeisRuan(HSCM(age=max(1e-3,self.parm['ThermAge']),zdeps=topDepth+z))
+        seisMod = OceanSeisRuan(HSCM(age=max(1e-3,self.parm['ThermAge']),zdeps=topDepth+z),period=1)
         qs = seisMod.qs
         return vp,rho,qs,qp
 

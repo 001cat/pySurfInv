@@ -6,7 +6,7 @@ OceanCrust:
   H:    7
   Vs:  [[3.25, 'fixed'],
         [3.94, 'fixed']]
-# Mantle_Therm_Bspline_Mix:
+# OceanMantle_ThermBsplineHybrid:
 #   H:    [200,'total']
 #   Vs:   [[0, 'abs', 0.4, 0.02],
 #          [-0.5, 'abs', 0.4, 0.02],

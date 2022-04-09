@@ -314,6 +314,14 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
                 layersD[layersK[grps.index('mantle')]]['ThermAge'][0] = localInfo['lithoAge']
             except:
                 layersD[layersK[grps.index('mantle')]]['ThermAge'] = localInfo['lithoAge']
+
+        if 'mantleInitParmVs' in localInfo.keys():
+            for i,vs in enumerate(localInfo['mantleInitParmVs']):
+                try:
+                    layersD[layersK[grps.index('mantle')]]['Vs'][i][0] = vs
+                except:
+                    layersD[layersK[grps.index('mantle')]]['Vs'][i] = vs
+            self.info.pop('mantleInitParmVs')
         
         return layersD
 

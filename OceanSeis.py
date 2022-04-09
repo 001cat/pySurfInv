@@ -1,22 +1,21 @@
-# ver = 0.01
 import numpy as np
 
 
 class TherModel():
     def __init__(self) -> None:
         self.zdeps = None
-        self.P     = None
-        self.T     = None
+        self.P     = None   # in Pa
+        self.T     = None   # in K
         pass
 
 class HSCM(TherModel):
-    def __init__(self, age, zdeps=np.linspace(0,200,200),rho0=3.43e3,Tp=1325) -> None:
+    def __init__(self, age, zdeps=np.linspace(0,200,200),rho0=3.43e3,Tp=1325,kappa=1e-6) -> None:
         self.age   = age
         self.zdeps = zdeps
         self.P     = self._calP()
-        self.T     = self._calT(Tp)
+        self.T     = self._calT(Tp,kappa)
         self.rho    = self._calRho(rho0)
-    def _calT(self,Tp=1325):
+    def _calT(self,Tp=1325,kappa=1e-6):
         C2K = 273.15
         zdeps = self.zdeps
         age   = self.age
@@ -24,7 +23,7 @@ class HSCM(TherModel):
         from scipy.special import erf
         T0 = 0; Da=0.4
         T_adiabatic = Tp + zdeps*Da
-        theta = erf(zdeps*1e3/(2*np.sqrt(age*365*24*3600*1)))# suppose kappa=1e-6
+        theta = erf(zdeps*1e3/(2*np.sqrt(age*365*24*3600*1*(kappa/1e-6))))# suppose kappa=1e-6
         thetaD = np.diff(theta)/np.diff(zdeps)
         Tm_search = np.linspace(1250,1450,201)
         diffT_same_gradient = np.array( [ ((Tm-T0)*theta+T0-T_adiabatic)[np.argmin(abs((Tm-T0)*thetaD-Da))]
@@ -40,13 +39,15 @@ class HSCM(TherModel):
     def _calP(self,rho=3.4e3):  # in Pa
         # change 3.2 to 3.4, the difference is comparable to 4Ma vs 4.1Ma at 30km
         return rho*9.8*self.zdeps*1000   # 3.424 in https://doi.org/10.1029/2004JB002965
-    def _calRho(self,rho0=3.43e3,P0=6.5e9,T0=1200+273.15):
-        kappa,alpha = 1e-11,3e-5 # Pa^-1,K^-1
-        # P = rho0*9.8*self.zdeps*1000
-        P = self._calP()
-        T = self._calT()
-        rho = rho0*(1+kappa*(P-P0)-alpha*(T-T0))
-        return rho
+    # def _calRho(self,rho0=3.43e3,P0=6.5e9,T0=1200+273.15):
+    #     kappa,alpha = 1e-11,3e-5 # Pa^-1,K^-1
+    #     P = self._calP()
+    #     T = self._calT()
+    #     rho = rho0*(1+kappa*(P-P0)-alpha*(T-T0))
+    #     return rho
+    def _calRho(self,rho0=3.42e3,P0=0.6e9,T0=500+273.15,alpha=4.4e-5,kappa=6.12e-12):
+        P,T = self._calP(),self._calT()
+        return rho0*(1-alpha*(T-T0))*(1+kappa*(P-P0))
 
 class seisModel():
     def __init__(self,therModel=None) -> None:
@@ -56,9 +57,6 @@ class seisModel():
             self.loadThermal(therModel)
     def loadThermal(self,therModel):
         pass
-
-
-
 
 
 class OceanSeisBass(seisModel): # https://doi.org/10.1029/RF002p0045 https://doi.org/10.1016/j.pepi.2010.09.005
@@ -79,9 +77,6 @@ class OceanSeisStix(seisModel): # https://doi.org/10.1029/2004JB002965
         vs = 4.77+0.038*therModel.zdeps/29.80-0.000378*(therModel.T-300)
         self.zdeps = therModel.zdeps
         self.vs    = vs*1000
-
-
-
 
 
 class OceanSeisRitz(seisModel):  # https://doi.org/10.1111/j.1365-246X.2004.02254.x 
@@ -245,6 +240,69 @@ class OceanSeisRuan(seisModel):  # https://doi.org/10.1016/j.epsl.2018.05.035
 
 
 
+def density_relation():
+    ''' 
+    this function was used in determine parameters used in rho(P,T), to get similar density as in OceanSeisRitz
+    the final answer gives less than 0.2% error in most possible cases.
+    '''
+
+    '''check density - T'''
+    # therMod = TherModel()
+    # therMod.T = np.linspace(0,1300,1000)+273.15
+    # therMod.P = 1e9*np.ones(therMod.T.shape)
+    # therMod.z = 30*np.ones(therMod.T.shape)
+    # seisMod = OceanSeisRitz(therMod)
+    # plt.figure()
+    # plt.plot(therMod.T-273.15,seisMod._rho)
+
+    # m,b = np.polyfit(therMod.T-273.15,seisMod._rho,1)
+
+    # T0 = 500; rho0 = b+m*T0; alpha = -m/rho0
+
+    # plt.plot(therMod.T-273.15,rho0*(1-alpha*(therMod.T-273.15-T0)))
+    # # T0=500C, rho0=3.42, alpha=4.27e-5 kg/m^3C, beta = 6.12e-12, P0 = 0.6GPa
+
+    # plt.figure()
+    # plt.plot(therMod.T-273.15,(rho0*(1-alpha*(therMod.T-273.15-T0))-seisMod._rho)/seisMod._rho)
+
+    '''check density - P'''
+    # therMod = TherModel()
+    # therMod.P = 1e9*np.linspace(0,10,100)
+    # therMod.T = (500+273.15)*np.ones(therMod.P.shape)
+    # therMod.z = therMod.P/1e9*100/3.4
+    # seisMod = OceanSeisRitz(therMod)
+    # plt.figure()
+    # plt.plot(therMod.P,seisMod._rho)
+
+    # rho0=3.42e3
+
+    # m,b = np.polyfit(therMod.P,seisMod._rho/rho0,1)
+
+    # beta = m; P0 = (1-b)/beta
+
+    # plt.plot(therMod.P,rho0*(1+beta*(therMod.P-P0)))
+
+    # plt.figure()
+    # plt.plot(therMod.P,(rho0*(1+beta*(therMod.P-P0))-seisMod._rho)/seisMod._rho)
+
+
+    ''' check more '''
+    # rho0=3.42e3;T0=500+273.15;P0=0.6e9;alpha=4.4e-5;beta=6.12e-12
+    rho0=3.43e3;T0=1200+273.15;P0=6.5e9;alpha=3e-5;beta=1e-11
+    T = np.linspace(500,1400,100)+273.15
+    P = np.linspace(0,8,100)*1e9
+    rho = np.zeros((len(T),len(P)))
+    rhoP = np.zeros((len(T),len(P)))
+    for i in range(len(T)):
+        therMod = TherModel()
+        therMod.P = P
+        therMod.T = T[i]*np.ones(therMod.P.shape)
+        therMod.z = therMod.P/1e9*100/3.4
+        seisMod = OceanSeisRitz(therMod)
+        rho[i,:] = seisMod._rho
+        rhoP[i,:] = rho0*(1-alpha*(T[i]-T0))*(1+beta*(P-P0))
+    plt.matshow(abs(rhoP-rho)/rho)
+
 
 
 if __name__ == '__main__':
@@ -253,16 +311,26 @@ if __name__ == '__main__':
     zdeps = np.linspace(0,200,1000)
     therMod = HSCM(4,zdeps)
     seisModRitz = OceanSeisRitz(therMod)
-    seisModRuan = OceanSeisRuan(therMod)
-    seisModYaTa = OceanSeisRuan(therMod,YaTaJu=True)
+    seisModRuan = OceanSeisRuan(therMod,period=1)
+    seisModYaTa = OceanSeisRuan(therMod,YaTaJu=True,period=1)
     seisModBass = OceanSeisBass(therMod)
     seisModStix = OceanSeisStix(therMod)
 
     plt.figure(figsize=[5.5,8])
-    plt.plot(seisModRitz.vs,zdeps,label='Rtizwoller')
-    plt.plot(seisModRuan.vs,zdeps,label='Ruan')
-    plt.plot(seisModRuan.vs_unrelaxed,zdeps,label='Ruan Unrelaxed')
-    plt.plot(seisModYaTa.vs,zdeps,label='YaTa')
-    plt.plot(seisModYaTa.vs_unrelaxed,zdeps,label='YaTa Unrelaxed')
+    plt.plot(seisModBass.vs,zdeps,label='Bass1995')
+    plt.plot(seisModRitz.vs,zdeps,label='Rtizwoller2004')
+    plt.plot(seisModStix.vs,zdeps,label='Stixrude2005')
+    c1 = plt.plot(seisModYaTa.vs_unrelaxed,zdeps,label='Yamauchi2016')[0].get_color()
+    # c2 = plt.plot(seisModRuan.vs_unrelaxed,zdeps,label='Ruan2018')[0].get_color()
+
+    plt.plot(seisModYaTa.vs,zdeps,'--',color=c1,label='Yamauchi2016-Q')
+    # plt.plot(seisModRuan.vs,zdeps,'--',color=c2,label='Ruan2018-Q')
+    
     plt.legend()
     plt.gca().invert_yaxis()
+
+    plt.xlabel('Shear Velocity (m/s)')
+    plt.ylabel('Depth (km)')
+    plt.title('Vs predicted from HSCM(4Ma)')
+
+    

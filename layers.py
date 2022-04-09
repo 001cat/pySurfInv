@@ -102,7 +102,7 @@ class PureGrid(SeisLayer):
 class OceanWater(SeisLayer):
     def __init__(self,parm,prop={}) -> None:
         super().__init__(parm,prop)
-        self.prop.update({'LayerName':'PureGrid','Group':'water'})
+        self.prop.update({'LayerName':'OceanWater','Group':'water'})
         self.parm['Vs'] = 0
     def seisPropGrids(self,**kwargs):
         N   = 1
@@ -279,11 +279,17 @@ class ReferenceMantle(OceanMantle):
 
 # Cascadia Specified
 class OceanSediment_Cascadia(OceanSediment):
+    def __init__(self, parm, prop={}) -> None:
+        super().__init__(parm, prop)
+        self.prop.update({'LayerName':'OceanSediment_Cascadia','Group':'sediment'})
     def _calVs(self, z, **kwargs):
         vs = (0.02*self.H(**kwargs)**2+1.27*self.H(**kwargs)+0.29*0.1)/(self.H(**kwargs)+0.29)
         return np.array([vs]* len(z))
 
 class OceanMantle_CascadiaQ(OceanMantle):
+    def __init__(self, parm, prop={}) -> None:
+        super().__init__(parm, prop)
+        self.prop.update({'LayerName':'OceanMantle_CascadiaQ','Group':'mantle'})
     def _calOthers(self, z, vs, topDepth=None, **kwargs):
         vp,rho,qs,qp = super()._calOthers(z, vs, **kwargs)
         from pySurfInv.OceanSeis import OceanSeisRuan,HSCM
@@ -292,6 +298,9 @@ class OceanMantle_CascadiaQ(OceanMantle):
         return vp,rho,qs,qp
 
 class OceanMantle_CascadiaQ_20220305SingleLayerClass(OceanMantle):
+    def __init__(self, parm, prop={}) -> None:
+        super().__init__(parm, prop)
+        self.prop.update({'LayerName':'OceanMantle_CascadiaQ_20220305SingleLayerClass','Group':'mantle'})
     def _calOthers(self, z, vs, topDepth=None, **kwargs):
         vp,rho,qs,qp = super()._calOthers(z, vs, **kwargs)
         from pySurfInv.OceanSeis import OceanSeisRuan,HSCM
@@ -300,10 +309,14 @@ class OceanMantle_CascadiaQ_20220305SingleLayerClass(OceanMantle):
         return vp,rho,qs,qp
 
 class OceanMantle_ThermBsplineHybrid(OceanMantle_CascadiaQ):
+    def __init__(self, parm, prop={}) -> None:
+        super().__init__(parm, prop)
+        self.prop.update({'LayerName':'OceanMantle_ThermBsplineHybrid','Group':'mantle'})
     def _calVs(self, z, topDepth, hCrust, **kwargs):
         nBasis = len(self.parm['Vs']) + 1
         from pySurfInv.OceanSeis import OceanSeisRitz,OceanSeisRuan,HSCM
-        seisMod = OceanSeisRitz(HSCM(age=max(1e-3,self.parm['ThermAge']),zdeps=hCrust+z))
+        Tp = self.parm.get('Tp',1325)
+        seisMod = OceanSeisRitz(HSCM(age=max(1e-3,self.parm['ThermAge']),zdeps=hCrust+z,Tp=Tp))
         def merge(x,y1,y2,xL=None,xK=None,xH=None,s=1):
             def transformD(x,xL=None,xK=None,xH=None):
                 d = np.zeros(x.shape)

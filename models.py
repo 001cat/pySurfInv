@@ -30,6 +30,8 @@ def _calForward(inProfile,wavetype='Ray',periods=[5,10,20,40,60,80]):
 
 
 def buildModel1D(ymlFile,localInfo={}):
+    if ymlFile is None:
+        return None
     if type(ymlFile) is dict:
         rawDict = ymlFile
     else:

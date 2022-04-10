@@ -61,7 +61,7 @@ class Point(object):
                     mod0 = mod1
                     continue
                 misfit1,chiSqr1,L1 = self.misfit(mod1)
-                if accept(L0,L1):
+                if accept(chiSqr0,chiSqr1):
                     mod1._dump(i,mcTrack,[misfit1,L1,1])
                     mod0,misfit0,chiSqr0,L0 = mod1,misfit1,chiSqr1,L1
                 else:
@@ -76,6 +76,8 @@ class Point(object):
         if verbose == 'mp':
             print(f'Step {pid.split("_")[1]} Time cost:{time.time()-timeStamp:.2f} ')
     def MCinvMP(self,outdir='MCtest',pid=None,runN=50000,step4uwalk=1000,nprocess=12,seed=None,priori=False):
+        if priori and outdir.split('_')[-1] != 'priori':
+            outdir = '_'.join((outdir,'priori'))
         tmpDir = 'MCtmp'+randString(10)
         random.seed(seed); seed = random.random()
         pid = self.pid if pid is None else pid
@@ -133,7 +135,7 @@ class PostPoint(Point):
             self.avgMod         = self.initMod.copy()
             self.avgMod._loadMC(np.mean(self.MCparas[self.accFinal,:],axis=0))
             
-            self.avgMod.misfit,self.avgMod.L = self.misfit(model=self.avgMod)
+            self.avgMod.misfit,_,self.avgMod.L = self.misfit(model=self.avgMod)
     
         if npzPriori is not None:
             tmp = np.load(npzPriori,allow_pickle=True)['mcTrack']

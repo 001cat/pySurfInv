@@ -316,7 +316,15 @@ class OceanMantle_ThermBsplineHybrid(OceanMantle_CascadiaQ):
         nBasis = len(self.parm['Vs']) + 1
         from pySurfInv.OceanSeis import OceanSeisRitz,OceanSeisRuan,HSCM
         Tp = self.parm.get('Tp',1325)
-        seisMod = OceanSeisRitz(HSCM(age=max(1e-3,self.parm['ThermAge']),zdeps=hCrust+z,Tp=Tp))
+        seisID = self.parm.get('SeisMod','Yamauchi')
+        if seisID == 'Yamauchi':
+            seisMod = OceanSeisRuan(HSCM(age=max(1e-3,self.parm['ThermAge']),zdeps=hCrust+z,Tp=Tp),
+                                    damp=True,YaTaJu=True,period=1)
+        elif seisID == 'Ritzwoller':
+            seisMod = OceanSeisRitz(HSCM(age=max(1e-3,self.parm['ThermAge']),zdeps=hCrust+z,Tp=Tp))
+        else:
+            raise ValueError(f'Invalid SeisMod: {seisID}')
+
         def merge(x,y1,y2,xL=None,xK=None,xH=None,s=1):
             def transformD(x,xL=None,xK=None,xH=None):
                 d = np.zeros(x.shape)

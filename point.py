@@ -270,6 +270,23 @@ class PostPoint(Point):
         plt.legend()
         return fig
     
+    def _check(self,step4uwalk=1000,stepLens=[]):
+        from scipy.ndimage.filters import uniform_filter1d
+        iStart,iEnd = 0,step4uwalk
+        rates,localMins,localThres = [],[],[]
+        while iEnd <= len(self.misfits):
+            misfits = self.misfits[iStart:iEnd]
+            thres = max(misfits.min()*2,misfits.min()+0.5)
+            localAcc = misfits[step4uwalk//2:]<thres
+            tmp = uniform_filter1d(misfits[step4uwalk//2:][localAcc],31)
+            rate = max(0,-np.polyfit(np.arange(len(tmp)),tmp,1)[0]*1000)
+            print(f'Step:{iStart//step4uwalk}: {localAcc.sum()} {rate} {misfits.min()}')
+            rates.append(rate);localMins.append(misfits.min());localThres.append(thres)
+            iStart += step4uwalk; iEnd += step4uwalk
+        rates = np.array(rates); localMins = np.array(localMins); localThres = np.array(localThres)
+        print((rates > localThres-localMins).sum())
+        
+
     # not used now
     def plotVsProfileStd(self):
         indFinAcc = np.where(self.accFinal)[0]

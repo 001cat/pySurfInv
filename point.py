@@ -26,13 +26,13 @@ class Point(object):
         misfit = np.sqrt(chiSqr/N)
         chiSqr =  chiSqr if chiSqr < 50 else np.sqrt(chiSqr*50.) 
         L = np.exp(-0.5 * chiSqr)
-        return misfit,L
+        return misfit,chiSqr,L
     def MCinv(self,outdir='MCtest',pid=None,runN=50000,step4uwalk=1000,init=True,
               seed=None,verbose=False,priori=False):
-        def accept(L0,L1):
-            if L0 == 0:
+        def accept(chiSqr0,chiSqr1):
+            if chiSqr1 < chiSqr0: # avoid overflow
                 return True
-            return random.random() > (L0-L1)/L0
+            return random.random() > 1-np.exp(-(chiSqr1-chiSqr0)/2) # (L0-L1)/L0
         debug = False
         random.seed(seed)
         pid = self.pid if pid is None else pid
@@ -46,7 +46,7 @@ class Point(object):
                     mod0 = self.initMod.reset()
                     if verbose == True:
                         print(f'{i+1}/{runN} Time cost:{time.time()-timeStamp:.2f} ')
-                misfit0,L0 = self.misfit(mod0)
+                misfit0,chiSqr0,L0 = self.misfit(mod0)
                 mod0._dump(i,mcTrack,[misfit0,L0,1])
             else:
                 mod1 = mod0.perturb()
@@ -60,10 +60,10 @@ class Point(object):
                     mod1._dump(i,mcTrack,[0,1,1])
                     mod0 = mod1
                     continue
-                misfit1,L1 = self.misfit(mod1)
+                misfit1,chiSqr1,L1 = self.misfit(mod1)
                 if accept(L0,L1):
                     mod1._dump(i,mcTrack,[misfit1,L1,1])
-                    mod0,misfit0,L0 = mod1,misfit1,L1
+                    mod0,misfit0,chiSqr0,L0 = mod1,misfit1,chiSqr1,L1
                 else:
                     mod1._dump(i,mcTrack,[misfit1,L1,0])
                 if debug and L0>0.01:
@@ -283,6 +283,7 @@ class PostPoint(Point):
             print(f'Step:{iStart//step4uwalk}: {localAcc.sum()} {rate} {misfits.min()}')
             rates.append(rate);localMins.append(misfits.min());localThres.append(thres)
             iStart += step4uwalk; iEnd += step4uwalk
+
         rates = np.array(rates); localMins = np.array(localMins); localThres = np.array(localThres)
         print((rates > localThres-localMins).sum())
         
@@ -330,27 +331,27 @@ class PostPoint(Point):
 
         pass
 
-if __name__ == '__main__':
-    # synthetic test
-    # random.seed(36)
-    # periods = np.array([10,12,14,16,18,20,24,28,32,36,40,50,60,70,80])
-    # mod1 = buildModel1D('cascadia-ocean.yml',{'topo':-4,'sedthk':0.6,'lithoAge':3})
-    # mod2 = mod1.copy()
-    # for _ in range(20):
-    #     mod2 = mod2.perturb()
-    # p = Point('cascadia-ocean.yml',{'topo':-4,'lithoAge':3},periods=periods,
-    #           vels=mod2.forward(periods),uncers=[0.01]*len(periods))
-    # p.MCinvMP(runN=50000,step4uwalk=1000,nprocess=26)
-    # p.MCinvMP('MCtest_priori',runN=50000,step4uwalk=1000,nprocess=26,priori=True)
+# Testing
+def synthetic_test():
+    random.seed(36)
+    periods = np.array([10,12,14,16,18,20,24,28,32,36,40,50,60,70,80])
+    mod1 = buildModel1D('cascadia-ocean.yml',{'topo':-4,'sedthk':0.6,'lithoAge':3})
+    mod2 = mod1.copy()
+    for _ in range(20):
+        mod2 = mod2.perturb()
+    p = Point('cascadia-ocean.yml',{'topo':-4,'lithoAge':3},periods=periods,
+              vels=mod2.forward(periods),uncers=[0.01]*len(periods))
+    p.MCinvMP(runN=50000,step4uwalk=1000,nprocess=26)
+    p.MCinvMP('MCtest_priori',runN=50000,step4uwalk=1000,nprocess=26,priori=True)
 
-    # postp = PostPoint('MCtest/test.npz','MCtest_priori/test.npz')
-    # postp.plotDisp()
-    # postp.plotDistrib()
-    # fig = postp.plotVsProfileGrid()
-    # mod2.plotProfileGrid(fig=fig,label='True',lineStyle='--')
-    # plt.legend()
+    postp = PostPoint('MCtest/test.npz','MCtest_priori/test.npz')
+    postp.plotDisp()
+    postp.plotDistrib()
+    fig = postp.plotVsProfileGrid()
+    mod2.plotProfileGrid(fig=fig,label='True',lineStyle='--')
+    plt.legend()
 
-    ''' real data test '''
+def realdata_test():
     from netCDF4 import Dataset
     from Triforce.utils import GeoMap
     with Dataset('example-Cascadia/infos/ETOPO_Cascadia_smoothed.grd') as dset:
@@ -405,3 +406,6 @@ if __name__ == '__main__':
     postp.plotVsProfileGrid()
     postp.plotDistrib([0,-1])
     postp.plotDisp()
+
+if __name__ == '__main__':
+    pass

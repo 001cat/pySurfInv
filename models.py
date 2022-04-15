@@ -443,23 +443,31 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
             if len(np.where(osci > osciLim)[0]) >= 1:   # origin >= 1
                 return False
 
+
+        z,vs,_,_,_,_,grp = self.seisPropGrids()
+        iMantle = np.array(grp) == 'mantle'
+        z,vs = z[iMantle],vs[iMantle]
+
         '''
         No local maximum above 60km
         '''
-        if np.any(h[grp=='mantle'][indLocMax]<60):
+        if len(scipy.signal.argrelmax(vs[z<60])[0]) > 0:
             # print('Debug: shallow local maximum found')
             return False
 
         '''
         No extreme velocity decrease below moho
         '''
-        hMantle = h[grp=='mantle']
-        slope = np.diff(vsMantle) / ((hMantle[1:]+hMantle[:-1])/2)
-        slope_z = hMantle.cumsum() - hMantle/2
-        slope_z = (slope_z[1:]+slope_z[:-1])/2
-        if np.any(slope[slope_z>10] < -0.02):   # estimate using 1Ma, slope of seisPropGrid in top layer 
-        # if np.any(slope[slope_z>10] < -0.015):
+        slope = np.diff(vs)/np.diff(z)
+        if min(slope) < -0.015: # -0.02 estimate using 1Ma, slope of seisPropGrid in top layer 
             return False
+        # hMantle = h[grp=='mantle']
+        # slope = np.diff(vsMantle) / ((hMantle[1:]+hMantle[:-1])/2)
+        # slope_z = hMantle.cumsum() - hMantle/2
+        # slope_z = (slope_z[1:]+slope_z[:-1])/2
+        # if np.any(slope[slope_z>10] < -0.02):   # estimate using 1Ma, slope of seisPropGrid in top layer 
+        # # if np.any(slope[slope_z>10] < -0.015):
+        #     return False
 
         # temporary only
         # if len(indLocMin) > 1:

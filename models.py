@@ -456,7 +456,9 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
         hMantle = h[grp=='mantle']
         slope = np.diff(vsMantle) / ((hMantle[1:]+hMantle[:-1])/2)
         slope_z = hMantle.cumsum() - hMantle/2
+        slope_z = (slope_z[1:]+slope_z[:-1])/2
         if np.any(slope[slope_z>10] < -0.02):   # estimate using 1Ma, slope of seisPropGrid in top layer 
+        # if np.any(slope[slope_z>10] < -0.015):
             return False
 
         # temporary only

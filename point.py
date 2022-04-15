@@ -1,3 +1,4 @@
+from email.generator import Generator
 import random,time,os
 import numpy as np
 import multiprocessing as mp
@@ -272,6 +273,7 @@ class PostPoint(Point):
         plt.legend()
         return fig
     
+    # in testing
     def _check(self,step4uwalk=1000,stepLens=[]):
         from scipy.ndimage.filters import uniform_filter1d
         iStart,iEnd = 0,step4uwalk
@@ -288,7 +290,18 @@ class PostPoint(Point):
 
         rates = np.array(rates); localMins = np.array(localMins); localThres = np.array(localThres)
         print((rates > localThres-localMins).sum())
-        
+    def _mod_generator(self,N=None,isRandom=True,accFinal=True):
+        inds_pool = np.where(self.accFinal)[0] if accFinal else range(self.N)
+        N = self.N if N is None else N
+        if isRandom:
+            inds = [random.choice(inds_pool) for _ in range(N)]
+        else:
+            inds = inds_pool[:N]
+
+        mod = self.initMod.copy()
+        for ind in inds:
+            mod._loadMC(self.MCparas[ind,:])
+            yield mod
 
     # not used now
     def plotVsProfileStd(self):

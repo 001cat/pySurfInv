@@ -349,6 +349,7 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
             vs += list(vs1); vp += list(vp1); rho += list(rho1); qs += list(qs1); qp += list(qp1)
             grp += [refLayer.prop['Group']]*len(z1)
         return np.array(z),np.array(vs),np.array(vp),np.array(rho),np.array(qs),np.array(qp),grp
+    
     def isgood(self):
         import scipy.signal
         def monoIncrease(a,eps=np.finfo(float).eps):
@@ -443,11 +444,20 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
                 return False
 
         '''
-        No local maximum above 75km
+        No local maximum above 60km
         '''
-        # if np.any(h[grp=='mantle'][indLocMax]<75):
-        #     print('Debug: shallow local maximum found')
-        #     return False
+        if np.any(h[grp=='mantle'][indLocMax]<60):
+            # print('Debug: shallow local maximum found')
+            return False
+
+        '''
+        No extreme velocity decrease below moho
+        '''
+        hMantle = h[grp=='mantle']
+        slope = np.diff(vsMantle) / ((hMantle[1:]+hMantle[:-1])/2)
+        slope_z = hMantle.cumsum() - hMantle/2
+        if np.any(slope[slope_z>10] < -0.02):   # estimate using 1Ma, slope of seisPropGrid in top layer 
+            return False
 
         # temporary only
         # if len(indLocMin) > 1:

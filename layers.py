@@ -337,6 +337,7 @@ class OceanMantle_ThermBsplineHybrid(OceanMantle_CascadiaQ):
                 I = (d >=  np.pi/2); d[I] =  np.pi/2
                 return d
             d = transformD(x,xL,xK,xH)
+            d[d>1.53] = 1.53; d[d<-1.53] = -1.53            # for speeding up
             l = np.tan(d)
             l = l/s
             l[l<-25] = -25

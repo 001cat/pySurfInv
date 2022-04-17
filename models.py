@@ -318,6 +318,10 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
         if 'lithoAge' in localInfo.keys():
             try:
                 layersD[layersK[grps.index('mantle')]]['ThermAge'][0] = localInfo['lithoAge']
+                if layersD[layersK[grps.index('mantle')]]['ThermAge'][1] == 'rel_pos' and \
+                   layersD[layersK[grps.index('mantle')]]['ThermAge'][0] < 2 :
+                    layersD[layersK[grps.index('mantle')]]['ThermAge'][1] = 'abs_pos'
+                    layersD[layersK[grps.index('mantle')]]['ThermAge'][2] = 4
             except:
                 layersD[layersK[grps.index('mantle')]]['ThermAge'] = localInfo['lithoAge']
 

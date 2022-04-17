@@ -16,25 +16,37 @@ class HSCM(TherModel):
         self.T     = self._calT(Tp,kappa)
         self.rho    = self._calRho(rho0)
     def _calT(self,Tp=1325,kappa=1e-6):
+        def calTm(T0,Tp,Da,kappa,age):
+            def f(z): return erf(z*1e3/(2*np.sqrt(age*365*24*3600*1*(kappa/1e-6))))
+            def g(z):
+                dz = 0.001;fz = f(z);fz_d = f(z+dz);dfz = (fz_d-fz)/dz + 1e-10
+                return fz/dfz-z-(Tp-T0)/Da
+            z0,z1 = 0,400
+            while z1-z0 > 0.01:
+                z2 = (z1+z0)/2
+                if g(z2) < 0:
+                    z0 = z2
+                else:
+                    z1 = z2
+            # print((Da*z1 + Tp-T0)/f(z1) + T0,(Da*z0 + Tp-T0)/f(z0) + T0)
+            Tm = (Da*z1 + Tp-T0)/f(z1) + T0
+            return Tm
         C2K = 273.15
         zdeps = self.zdeps
         age   = self.age
         ''' temperature calculated from half space cooling model, topography change ignored''' 
         from scipy.special import erf
-        T0 = 0; Da=0.4
-        T_adiabatic = Tp + zdeps*Da
+        T0 = 0; Da=0.4; T_adiabatic = Tp + zdeps*Da
+        Tm = calTm(T0,Tp,Da,kappa,age)
+
         theta = erf(zdeps*1e3/(2*np.sqrt(age*365*24*3600*1*(kappa/1e-6))))# suppose kappa=1e-6
-        thetaD = np.diff(theta)/np.diff(zdeps)
-        Tm_search = np.linspace(1250,1450,201)
-        diffT_same_gradient = np.array( [ ((Tm-T0)*theta+T0-T_adiabatic)[np.argmin(abs((Tm-T0)*thetaD-Da))]
-                                        for Tm in Tm_search] )    
-        Tm = Tm_search[np.argmin(abs(diffT_same_gradient))]
         T = (Tm-T0)*theta+T0
         try:
-            adiaBegin = np.where(np.diff(T)/np.diff(zdeps) < 0.4)[0][0]
+            adiaBegin = np.where(np.diff(T)/np.diff(zdeps) < Da)[0][0]
             T[adiaBegin:] = T_adiabatic[adiaBegin:]
         except:
             pass
+        # return Tp*np.ones(self.zdeps.shape)
         return T+C2K
     def _calP(self,rho=3.4e3):  # in Pa
         # change 3.2 to 3.4, the difference is comparable to 4Ma vs 4.1Ma at 30km

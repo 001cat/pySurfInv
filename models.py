@@ -255,7 +255,7 @@ class Model1D_MCinv(Model1D):
         preInfo.extend(self._brownians())
         target[index] = preInfo
 
-    def perturb(self,isgood=None):
+    def perturb(self,isgood=None,verbose=False):
         if isgood is None:
             def isgood(model):
                 return model.isgood()
@@ -263,9 +263,11 @@ class Model1D_MCinv(Model1D):
             newModel = self.copy()
             newModel._layers = [l._perturb() for l in self.layers]
             if isgood(newModel):
+                if verbose:
+                    print(f'Perturb at {i}')
                 return newModel
-        return self.reset()
-    def reset(self,isgood=None):
+        return self.reset(isgood=isgood,verbose=verbose)
+    def reset(self,isgood=None,verbose=False):
         if isgood is None:
             def isgood(model):
                 return model.isgood()
@@ -273,6 +275,8 @@ class Model1D_MCinv(Model1D):
             newModel = newModel = self.copy()
             newModel._layers = [l._reset() for l in self.layers]
             if isgood(newModel):
+                if verbose:
+                    print(f'Reset at {i}')
                 return newModel
         self.show()
         raise RuntimeError(f'Error: Cound not find a good model through reset.')
@@ -461,13 +465,6 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
         slope = np.diff(vs)/np.diff(z)
         if min(slope) < -0.015: # -0.02 estimate using 1Ma, slope of seisPropGrid in top layer 
             return False
-        # hMantle = h[grp=='mantle']
-        # slope = np.diff(vsMantle) / ((hMantle[1:]+hMantle[:-1])/2)
-        # slope_z = hMantle.cumsum() - hMantle/2
-        # slope_z = (slope_z[1:]+slope_z[:-1])/2
-        # if np.any(slope[slope_z>10] < -0.02):   # estimate using 1Ma, slope of seisPropGrid in top layer 
-        # # if np.any(slope[slope_z>10] < -0.015):
-        #     return False
 
         # temporary only
         # if len(indLocMin) > 1:

@@ -43,6 +43,8 @@ class Point(object):
             if i % step4uwalk == 0:
                 if init:
                     mod0 = self.initMod.copy();init=False
+                    if not mod0.isgood():
+                        mod0 = mod0.perturb()
                 else:
                     mod0 = self.initMod.reset()
                     if verbose == True:

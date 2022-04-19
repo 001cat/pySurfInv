@@ -358,7 +358,7 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
             grp += [refLayer.prop['Group']]*len(z1)
         return np.array(z),np.array(vs),np.array(vp),np.array(rho),np.array(qs),np.array(qp),grp
     
-    def isgood(self):
+    def isgood(self,verbose=False):
         import scipy.signal
         def monoIncrease(a,eps=np.finfo(float).eps):
             return np.all(np.diff(a)>=0)
@@ -460,15 +460,26 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
         No local maximum above 60km
         '''
         if len(scipy.signal.argrelmax(vs[z<60])[0]) > 0:
-            # print('Debug: shallow local maximum found')
+            if verbose:
+                print('Debug: shallow local maximum found')
             return False
 
         '''
         No extreme velocity decrease below moho
         '''
-        slope = np.diff(vs)/np.diff(z)
-        if min(slope) < -0.015: # -0.02 estimate using 1Ma, slope of seisPropGrid in top layer 
-            return False
+        if self.layers[-1].prop['LayerName'] == 'OceanMantle_ThermBsplineHybrid':
+            slope = np.diff(vs)/np.diff(z)
+            if slope.min() < slope[0]*1.5:  # should be between 1.5 to 2.2
+                return False
+            # from pySurfInv.OceanSeis import OceanSeisRuan,HSCM
+            # age = self.layers[-1].parm['ThermAge']
+            # seisMod = OceanSeisRuan(HSCM(age,z))
+            # slopeLim = (np.diff(seisMod.vs)/np.diff(seisMod.zdeps)/1000).min() * 1.5
+            # slope = np.diff(vs)/np.diff(z)
+            # if slope[0] > slopeLim and slope.min() < slopeLim:
+            #     if verbose:
+            #         print('Debug: vel decrease too fast')
+            #     return False
 
         # temporary only
         # if len(indLocMin) > 1:

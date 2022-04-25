@@ -480,6 +480,11 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
             #     if verbose:
             #         print('Debug: vel decrease too fast')
             #     return False
+        '''
+        velocity increase at bottom
+        '''
+        if (vs[-1]-vs[-2])/(z[-1]-z[-2]) <= 0:
+            return False
 
         # temporary only
         # if len(indLocMin) > 1:

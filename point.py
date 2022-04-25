@@ -1,5 +1,5 @@
 from email.generator import Generator
-import random,time,os
+import random,time,os,tqdm
 import numpy as np
 import multiprocessing as mp
 from pySurfInv.models import buildModel1D
@@ -107,7 +107,31 @@ class Point(object):
                             setting=dict(self.initMod.toYML()),obs=self.obs,pid=pid)
 
         print(f'Time cost:{time.time()-timeStamp:.2f} ')
-      
+
+class PointCascadia(Point):
+    def misfit(self,model=None):
+        if model is None:
+            model = self.initMod
+        T = np.array(self.obs['T'])
+        cP = model.forward(periods=T)
+        if cP is None:
+            return 88888,0
+        cO = self.obs['c']
+        uncer = self.obs['uncer']
+
+        N = len(T)
+        # chiSqr = (((cO - cP)/uncer)**2).sum()
+
+        bias = (cO - cP)/uncer
+        bias1 = bias[T<=40]
+        bias2 = bias[T>40]
+        chiSqr = ((bias1**2).mean() + (bias2**2).mean())/2*N
+
+        misfit = np.sqrt(chiSqr/N)
+        chiSqr =  chiSqr if chiSqr < 50 else np.sqrt(chiSqr*50.) 
+        L = np.exp(-0.5 * chiSqr)
+        return misfit,chiSqr,L
+
 class PostPoint(Point):
     def __init__(self,npzMC=None,npzPriori=None):
         if npzMC is not None:
@@ -233,19 +257,39 @@ class PostPoint(Point):
         plt.legend()
         plt.title('Dispersion')
         return plt.gcf(),plt.gca()
-    def plotDistrib(self,inds='all'):
-        if inds == 'all':
-            inds = range(len(self.initMod._brownians()))
-        for ind in inds:
-            plt.figure()
-            y = self.MCparas_pri[:,ind]
-            _,bin_edges = np.histogram(y,bins=30)
-            y = self.MCparas[self.accFinal,ind]
-            plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)))
-            y = self.MCparas_pri[:,ind]
-            plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)),
-                        fill=False,ec='k',rwidth=1.0)
-            plt.title(f'N = {self.accFinal.sum()}/{len(self.accFinal)}')
+    def plotDistrib(self,inds='all',zdeps=None):
+        def loadMC(mod,mc):
+            mod._loadMC(mc)
+            return mod.copy()
+        if zdeps is not None:
+            mod = self.initMod.copy()
+            accMods = [loadMC(mod,mc) for mc in self.MCparas[self.accFinal]]
+            accVs   = np.array([mod.value(zdeps) for mod in tqdm.tqdm(accMods)])
+            priMods = [loadMC(mod,mc) for mc in self.MCparas_pri[:]]
+            priVs   = np.array([mod.value(zdeps) for mod in tqdm.tqdm(priMods)])
+            for i,z in enumerate(zdeps):
+                plt.figure()
+                _,bin_edges = np.histogram(priVs[:,i],bins=30)
+                y = accVs[:,i]
+                plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)))
+                y = priVs[:,i]
+                plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)),
+                            fill=False,ec='k',rwidth=1.0)
+                plt.title(f'Hist of Vs at {z} km')
+            return
+        else:
+            if inds == 'all':
+                inds = range(len(self.initMod._brownians()))
+            for ind in inds:
+                plt.figure()
+                y = self.MCparas_pri[:,ind]
+                _,bin_edges = np.histogram(y,bins=30)
+                y = self.MCparas[self.accFinal,ind]
+                plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)))
+                y = self.MCparas_pri[:,ind]
+                plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)),
+                            fill=False,ec='k',rwidth=1.0)
+                plt.title(f'N = {self.accFinal.sum()}/{len(self.accFinal)}')
     def plotVsProfile(self,allAccepted=False):
         fig = self.initMod.plotProfile(label='Initial')
         mod = self.avgMod.copy()
@@ -285,7 +329,7 @@ class PostPoint(Point):
             thres = max(misfits.min()*2,misfits.min()+0.5)
             localAcc = misfits[step4uwalk//2:]<thres
             tmp = uniform_filter1d(misfits[step4uwalk//2:][localAcc],31)
-            rate = max(0,-np.polyfit(np.arange(len(tmp)),tmp,1)[0]*1000)
+            rate = max(0,-np.polyfit(np.arange(len(tmp)),tmp,1)[0]*(step4uwalk//2))
             print(f'Step:{iStart//step4uwalk}: {localAcc.sum()} {rate} {misfits.min()}')
             rates.append(rate);localMins.append(misfits.min());localThres.append(thres)
             iStart += step4uwalk; iEnd += step4uwalk

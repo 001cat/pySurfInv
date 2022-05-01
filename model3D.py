@@ -64,7 +64,11 @@ class Model3D(GeoGrid):
         for npzfile in glob.glob(f'{invDir}/*.npz'):
             ptlon,ptlat = npzfile.split('/')[-1][:-4].split('_')[:]
             ptlon,ptlat = float(ptlon),float(ptlat)
-            self._addInvPoint(ptlon,ptlat,PostPoint(npzfile))
+            print(f'Add point {ptlon:.1f}_{ptlat:.1f}')
+            try:
+                self._addInvPoint(ptlon,ptlat,PostPoint(npzfile))
+            except Exception as e:
+                print(f'Warning: {e}')
 
     def vsProfile(self,z,lat,lon):
         def foo(j,i,z):
@@ -179,7 +183,6 @@ class Model3D(GeoGrid):
 
 
     def _addInvPoint(self,lon,lat,postpoint:PostPoint):
-        print(f'Add point {lon:.1f}_{lat:.1f}')
         i,j = self._findInd(lon,lat)
         self.mods[i][j]     = postpoint.avgMod.copy()
         self._mods_init[i][j] = postpoint.initMod.copy()

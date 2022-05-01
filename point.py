@@ -29,11 +29,14 @@ class Point(object):
         L = np.exp(-0.5 * chiSqr)
         return misfit,chiSqr,L
     def MCinv(self,outdir='MCtest',pid=None,runN=50000,step4uwalk=1000,init=True,
-              seed=None,verbose=False,priori=False):
+              seed=None,verbose=False,priori=False,isgood=None):
         def accept(chiSqr0,chiSqr1):
             if chiSqr1 < chiSqr0: # avoid overflow
                 return True
             return random.random() > 1-np.exp(-(chiSqr1-chiSqr0)/2) # (L0-L1)/L0
+        if isgood is None:
+            def isgood(model):
+                return model.isgood()
         debug = False
         random.seed(seed)
         pid = self.pid if pid is None else pid
@@ -43,8 +46,8 @@ class Point(object):
             if i % step4uwalk == 0:
                 if init:
                     mod0 = self.initMod.copy();init=False
-                    if not mod0.isgood():
-                        mod0 = mod0.perturb()
+                    if not isgood(mod0):
+                        mod0 = mod0.perturb(isgood)
                 else:
                     mod0 = self.initMod.reset()
                     if verbose == True:
@@ -52,7 +55,7 @@ class Point(object):
                 misfit0,chiSqr0,L0 = self.misfit(mod0)
                 mod0._dump(i,mcTrack,[misfit0,L0,1])
             else:
-                mod1 = mod0.perturb()
+                mod1 = mod0.perturb(isgood)
                 if debug:
                     plt.figure()
                     T = self.obs['T']
@@ -78,7 +81,7 @@ class Point(object):
                             setting=dict(self.initMod.toYML()),obs=self.obs,pid=pid)
         if verbose == 'mp':
             print(f'Step {pid.split("_")[1]} Time cost:{time.time()-timeStamp:.2f} ')
-    def MCinvMP(self,outdir='MCtest',pid=None,runN=50000,step4uwalk=1000,nprocess=12,seed=None,priori=False):
+    def MCinvMP(self,outdir='MCtest',pid=None,runN=50000,step4uwalk=1000,nprocess=12,seed=None,priori=False,isgood=None):
         if priori and outdir.split('_')[-1] != 'priori':
             outdir = '_'.join((outdir,'priori'))
         tmpDir = 'MCtmp'+randString(10)
@@ -87,7 +90,7 @@ class Point(object):
 
         print(f'Running MC inversion: {pid}')
 
-        argInLst = [ [tmpDir,f'tmp_{i:03d}_{pid}',step4uwalk,step4uwalk,i==0,seed+i,'mp',priori]
+        argInLst = [ [tmpDir,f'tmp_{i:03d}_{pid}',step4uwalk,step4uwalk,i==0,seed+i,'mp',priori,isgood]
                      for i in range(runN//step4uwalk)]
         timeStamp = time.time()
         pool = mp.Pool(processes=nprocess)

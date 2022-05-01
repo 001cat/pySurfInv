@@ -451,7 +451,7 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
             if len(np.where(osci > osciLim)[0]) >= 1:   # origin >= 1
                 return False
 
-
+        # new constrains based on grids instead of layers
         z,vs,_,_,_,_,grp = self.seisPropGrids()
         iMantle = np.array(grp) == 'mantle'
         z,vs = z[iMantle],vs[iMantle]
@@ -459,7 +459,7 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
         '''
         No local maximum above 60km
         '''
-        if len(scipy.signal.argrelmax(vs[z<60])[0]) > 0:
+        if len(scipy.signal.argrelmax(vs)[0]) > 0:
             if verbose:
                 print('Debug: shallow local maximum found')
             return False
@@ -471,15 +471,21 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
             slope = np.diff(vs)/np.diff(z)
             if slope.min() < slope[0]*1.5:  # should be between 1.5 to 2.2
                 return False
-            # from pySurfInv.OceanSeis import OceanSeisRuan,HSCM
-            # age = self.layers[-1].parm['ThermAge']
-            # seisMod = OceanSeisRuan(HSCM(age,z))
-            # slopeLim = (np.diff(seisMod.vs)/np.diff(seisMod.zdeps)/1000).min() * 1.5
-            # slope = np.diff(vs)/np.diff(z)
-            # if slope[0] > slopeLim and slope.min() < slopeLim:
-            #     if verbose:
-            #         print('Debug: vel decrease too fast')
-            #     return False
+                
+        '''
+        osci limitation using cwt
+        '''
+        if self.layers[-1].prop['LayerName'] == 'OceanMantle_ThermBsplineHybrid':
+            cwtWidth = 30//(z[1]-z[0])
+            cwt = scipy.signal.cwt(vs - np.interp(z,[z[0],z[-1]],[vs[0],vs[-1]]),
+                             scipy.signal.ricker,[cwtWidth])[0]
+            indLocMax = scipy.signal.argrelmax(cwt)[0]
+            indLocMin = scipy.signal.argrelmin(cwt)[0]
+            indLoc = np.sort(np.append(indLocMax,indLocMin))
+            osci = abs(np.diff(cwt[indLoc]))
+            if np.any(osci > 0.3):
+                return False
+
         '''
         velocity increase at bottom
         '''

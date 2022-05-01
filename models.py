@@ -457,7 +457,7 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
         z,vs = z[iMantle],vs[iMantle]
 
         '''
-        No local maximum above 60km
+        No local maximum
         '''
         if len(scipy.signal.argrelmax(vs)[0]) > 0:
             if verbose:

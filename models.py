@@ -29,25 +29,37 @@ def _calForward(inProfile,wavetype='Ray',periods=[5,10,20,40,60,80]):
     return cr0[:nper]
 
 
-def buildModel1D(ymlFile,localInfo={}):
-    if ymlFile is None:
-        return None
-    if type(ymlFile) is dict:
-        rawDict = ymlFile
-    else:
-        import yaml
-        with open(ymlFile, 'r') as f:
-            rawDict = yaml.load(f,Loader=yaml.FullLoader)
-    modelType = rawDict['Info'].get('ModelType','Cascadia_Oceanic')
+def buildModel1D(ymlFile,localInfo={},default='Cascadia_Oceanic'):
+    modelTypeDict = {
+        'General'                           : Model1D,
+        'MCInv'                             : Model1D_MCinv,
+        'Cascadia_Oceanic'                  : Model1D_Cascadia_Oceanic,
+        'Cascadia_Continental'              : Model1D_Cascadia_Continental
+    }
+
+    def loadRawDict(ymlFile):
+        if ymlFile is None:
+            return None
+        if type(ymlFile) is dict:
+            rawDict = ymlFile
+        else:
+            import yaml
+            with open(ymlFile, 'r') as f:
+                rawDict = yaml.load(f,Loader=yaml.FullLoader)
+        return rawDict
+
+    def initModel(rawDict):
+        modelType = rawDict['Info'].get('ModelType',default)
+        try:
+            mod = modelTypeDict[modelType]()
+            mod.loadYML(rawDict,localInfo)
+        except:
+            raise ValueError(f'Error: ModelType {modelType} not supported!')
+        return mod
+
+    return initModel(loadRawDict(ymlFile))
     
-    if modelType == 'General_Model':
-        mod = Model1D()
-    elif modelType == 'Cascadia_Oceanic':
-        mod = Model1D_Cascadia_Oceanic()
-    else:
-        raise ValueError(f'Error: ModelType {modelType} not supported!')
-    mod.loadYML(rawDict,localInfo)
-    return mod
+
 
 class Model1D():
     def __init__(self,layers=[],info=None) -> None:
@@ -77,15 +89,6 @@ class Model1D():
                     continue
         layersD = self._loadLocalInfo(ymlD,localInfo)
         self._layers = [buildSeisLayer(parm,typeID) for typeID,parm in layersD.items()]
-        # 1. load yml to be layers:Dict, info:Dict
-        # 1.1 to be compatible with previous version
-            # if 'Qmodel' in inDict['Info'].keys() and inDict['Info']['Qmodel'] == 'Ruan2018':
-            #     oldTypeDict['mantle_Bspline_'] = 'OceanMantle_CascadiaQ'
-            # set stype = 'Ruan'
-        # 1.2 to be compatible
-            # change 'H'/'h': [xxx,'total'] to be 'BottomDepth': xxx
-        # 2. use information from localInfo to update layers, and add all those information to info, this should be a sepearate method
-        # 4. instanciate self._layers
 
     def _loadLocalInfo(self,layersD,localInfo):
         self.info.update(localInfo)
@@ -93,10 +96,6 @@ class Model1D():
         To Be Specified in Child Class: how local information modifies layers
         '''
         return layersD
-    # def loadYML(self,ymlFile,localInfo={}):
-    #     layerDict,info = loadSetting(ymlFile,localInfo)
-    #     self.info = info
-    #     self._layers = [buildSeisLayer(parm,typeID) for typeID,parm in layerDict.items()]
 
     def toYML(self):
         def checker(v):
@@ -110,7 +109,7 @@ class Model1D():
         return deepcopy(ymlDict)
 
     def seisPropGrids(self,refLayer=False):
-        z0 = -max(self.info.get('topo',0),0) #!!! encapsulate these param of seisPropGrids into one function
+        z0 = -max(self.info.get('topo',0),0)
         z,vs,vp,rho,qs,qp,grp = [],[],[],[],[],[],[]
         for layer in self.layers:
             z1,vs1,vp1,rho1,qs1,qp1 = layer.seisPropGrids(topDepth=z0)
@@ -271,13 +270,14 @@ class Model1D_MCinv(Model1D):
         if isgood is None:
             def isgood(model):
                 return model.isgood()
-        for i in range(1000):
-            newModel = newModel = self.copy()
+        for i in range(10000):
+            newModel = self.copy()
             newModel._layers = [l._reset() for l in self.layers]
             if isgood(newModel):
                 if verbose:
                     print(f'Reset at {i}')
                 return newModel
+        print(f'Cound not find a good model through reset after {i+1} iter.')
         self.show()
         raise RuntimeError(f'Error: Cound not find a good model through reset.')
     def isgood(self):
@@ -340,7 +340,6 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
         hCrust = np.sum([l.H() if l.prop['Group'] == 'crust' else 0 for l in self.layers])
         z,vs,vp,rho,qs,qp,grp = [],[],[],[],[],[],[]
         for layer in self.layers:
-            # layer._tmpInfo = {'z0':z0,'age':self.info['lithoAge'],'hCrust':hCrust}
             z1,vs1,vp1,rho1,qs1,qp1 = layer.seisPropGrids(topDepth=z0,hCrust=hCrust)
             z += list(z1+z0)
             vs += list(vs1); vp += list(vp1); rho += list(rho1); qs += list(qs1); qp += list(qp1)
@@ -350,7 +349,7 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
             refLayer = self._refLayer.copy()
             refLayer.parm['Vs'][0] += vs[-1]
             refLayer.parm['Vs'][1] += vs[-1]
-            z1,vs1,vp1,rho1,qs1,qp1 = refLayer.seisPropGrids()
+            z1,vs1,vp1,rho1,qs1,qp1 = refLayer.seisPropGrids(topDepth=z0)
             vs1 += [vs[-1]-vs1[0]]; vp1 += [vp[-1]-vp1[0]]; rho1 += [rho[-1]-rho1[0]]
             qs1 += [qs[-1]-qs1[0]]; qp1 += [qp[-1]-qp1[0]]
             z += list(z1+z0)
@@ -459,10 +458,11 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
         '''
         No local maximum
         '''
-        if len(scipy.signal.argrelmax(vs)[0]) > 0:
-            if verbose:
-                print('Debug: shallow local maximum found')
-            return False
+        if self.layers[-1].prop['LayerName'] == 'OceanMantle_ThermBsplineHybrid':
+            if len(scipy.signal.argrelmax(vs)[0]) > 0:
+                if verbose:
+                    print('Debug: shallow local maximum found')
+                return False
 
         '''
         No extreme velocity decrease below moho
@@ -475,16 +475,16 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
         '''
         osci limitation using cwt
         '''
-        if self.layers[-1].prop['LayerName'] == 'OceanMantle_ThermBsplineHybrid':
-            cwtWidth = 30//(z[1]-z[0])
-            cwt = scipy.signal.cwt(vs - np.interp(z,[z[0],z[-1]],[vs[0],vs[-1]]),
-                             scipy.signal.ricker,[cwtWidth])[0]
-            indLocMax = scipy.signal.argrelmax(cwt)[0]
-            indLocMin = scipy.signal.argrelmin(cwt)[0]
-            indLoc = np.sort(np.append(indLocMax,indLocMin))
-            osci = abs(np.diff(cwt[indLoc]))
-            if np.any(osci > 0.3):
-                return False
+        # if self.layers[-1].prop['LayerName'] == 'OceanMantle_ThermBsplineHybrid':
+        cwtWidth = 30//(z[1]-z[0])
+        cwt = scipy.signal.cwt(vs - np.interp(z,[z[0],z[-1]],[vs[0],vs[-1]]),
+                            scipy.signal.ricker,[cwtWidth])[0]
+        indLocMax = scipy.signal.argrelmax(cwt)[0]
+        indLocMin = scipy.signal.argrelmin(cwt)[0]
+        indLoc = np.sort(np.append(indLocMax,indLocMin))
+        osci = abs(np.diff(cwt[indLoc]))
+        if np.any(osci > 0.3):
+            return False
 
         '''
         velocity increase at bottom
@@ -498,7 +498,130 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
 
         return True
 
+class Model1D_Cascadia_Continental(Model1D_MCinv):
+    def _loadLocalInfo(self, layersD, localInfo):
+        super()._loadLocalInfo(layersD, localInfo)
+        layersD = deepcopy(layersD)
+        layersK = list(layersD.keys())
+        grps = [buildSeisLayer(parm,typeID).prop['Group'] for typeID,parm in layersD.items()]
 
+        topo = localInfo.get('topo',self.info.get('topo',0))
+
+        if 'sedthk' in localInfo.keys():
+            try:
+                layersD[layersK[grps.index('sediment')]]['H'][0] = localInfo['sedthk']
+            except:
+                layersD[layersK[grps.index('sediment')]]['H'] = localInfo['sedthk']
+        
+        if 'crsthk' in localInfo.keys():
+            try:
+                layersD[layersK[grps.index('crust')]]['H'][0] = localInfo['crsthk']
+            except:
+                layersD[layersK[grps.index('crust')]]['H'] = localInfo['crsthk']
+        
+        return layersD
+
+    def isgood(self,verbose=False):
+        import scipy.signal
+        def monoIncrease(a,eps=np.finfo(float).eps):
+            return np.all(np.diff(a)>=0)
+        
+        h,vs,vp,rho,qs,qp,grp = self.seisPropLayers();grp = np.array(grp)
+        vsSediment = vs[grp=='sediment']
+        vsCrust = vs[grp=='crust']
+        vsMantle = vs[grp=='mantle']
+
+        ''' 
+        Vs in sediment > 0.2; from Lili's code 
+        '''
+        if np.any(vsSediment<0.2):
+            return False
+
+        '''
+        Vs jump between group is positive, contraint (5) in 4.2 of Shen et al., 2012
+        '''
+        for i in np.where((grp[1:]!=grp[:-1]))[0]:
+            if vs[i+1] < vs[i]:
+                return False
+
+        '''
+        All Vs < 4.9km/sec, contraint (6) in 4.2 of Shen et al., 2012
+        '''
+        if np.any(vs > 4.9):
+            return False
+
+        '''
+        Velocity in sediment and crust layers must increase with depth
+        '''
+        if not monoIncrease(vs[grp=='sediment']):
+            return False
+        if not monoIncrease(vs[grp=='crust']): 
+            return False
+
+        '''
+        Negative velocity gradient below moho
+        '''
+        if vsMantle[1]>vsMantle[0]:
+            return False
+    
+        '''
+        Vs in crust < 4.3
+        '''
+        # if np.any(vsCrust > 4.3):
+        #     return False
+
+        '''
+        Vs at first fine layer in mantle is between 4.0 and 4.6
+        '''
+        # if vsMantle[0] < 4.0 or vsMantle[0] > 4.6:
+        #     return False
+
+        ''' 
+        Vs at last fine layer in mantle > 4.3 
+        '''
+        # if vsMantle[-1] < 4.3:
+        #     return False
+
+        '''
+        Vs > 4.0 below 80km
+        '''
+        # if np.any(vsMantle < 4.0):
+        #     return False
+
+        '''
+        Change in mantle < 15%, made by Ayu
+        '''
+        if (vsMantle.max() - vsMantle.min()) > 0.15*vsMantle.mean():
+            return False
+
+        '''
+        Oscillation Limit, the difference between nearby local extrema < 10% of mean vs in mantle
+        '''
+        osciLim = 0.1*vsMantle.mean()
+        indLocMax = scipy.signal.argrelmax(vsMantle)[0]
+        indLocMin = scipy.signal.argrelmin(vsMantle)[0]
+        if len(indLocMax) + len(indLocMin) > 1:
+            indLoc = np.sort(np.append(indLocMax,indLocMin))
+            osci = abs(np.diff(vsMantle[indLoc]))
+            if len(np.where(osci > osciLim)[0]) >= 1:   # origin >= 1
+                return False
+
+        # new constrains based on grids instead of layers
+        z,vs,_,_,_,_,grp = self.seisPropGrids()
+        iMantle = np.array(grp) == 'mantle'
+        z,vs = z[iMantle],vs[iMantle]
+
+        '''
+        velocity increase at bottom
+        '''
+        if (vs[-1]-vs[-2])/(z[-1]-z[-2]) <= 0:
+            return False
+
+        # temporary only
+        # if len(indLocMin) > 1:
+        #     return False
+
+        return True
 
 
 

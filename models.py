@@ -525,17 +525,12 @@ class Model1D_Cascadia_Continental(Model1D_MCinv):
         import scipy.signal
         def monoIncrease(a,eps=np.finfo(float).eps):
             return np.all(np.diff(a)>=0)
-        
-        h,vs,vp,rho,qs,qp,grp = self.seisPropLayers();grp = np.array(grp)
-        vsSediment = vs[grp=='sediment']
-        vsCrust = vs[grp=='crust']
-        vsMantle = vs[grp=='mantle']
 
-        ''' 
-        Vs in sediment > 0.2; from Lili's code 
-        '''
-        if np.any(vsSediment<0.2):
-            return False
+        z,vs,_,_,_,_,grp = self.seisPropGrids();grp = np.array(grp)
+        vsMantle    = vs[grp=='mantle']
+        vsSediment  = vs[grp=='sediment']
+        vsCrust     = vs[grp=='crust']
+        zMantle     = z[grp=='mantle']
 
         '''
         Vs jump between group is positive, contraint (5) in 4.2 of Shen et al., 2012
@@ -561,8 +556,8 @@ class Model1D_Cascadia_Continental(Model1D_MCinv):
         '''
         Negative velocity gradient below moho
         '''
-        if vsMantle[1]>vsMantle[0]:
-            return False
+        # if vsMantle[1]>vsMantle[0]:
+        #     return False
     
         '''
         Vs in crust < 4.3
@@ -606,15 +601,10 @@ class Model1D_Cascadia_Continental(Model1D_MCinv):
             if len(np.where(osci > osciLim)[0]) >= 1:   # origin >= 1
                 return False
 
-        # new constrains based on grids instead of layers
-        z,vs,_,_,_,_,grp = self.seisPropGrids()
-        iMantle = np.array(grp) == 'mantle'
-        z,vs = z[iMantle],vs[iMantle]
-
         '''
         velocity increase at bottom
         '''
-        if (vs[-1]-vs[-2])/(z[-1]-z[-2]) <= 0:
+        if (vsMantle[-1]-vsMantle[-2])/(zMantle[-1]-zMantle[-2]) <= 0:
             return False
 
         # temporary only

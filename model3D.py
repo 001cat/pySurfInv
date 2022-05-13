@@ -136,7 +136,6 @@ class Model3D(GeoGrid):
             outProfiles = [np.array(p) for p in outProfiles[:-1]] + outProfiles[-1:]
             # print(len(outProfiles[-1]))
             return Model1D_Puregird(outProfiles,info=mod.copy().info)
-            
 
         m,n = len(self.lats),len(self.lons)
         self._mods_avg = [ [None]*n for _ in range(m)]
@@ -150,6 +149,16 @@ class Model3D(GeoGrid):
                     mat[i,j,:,:] = np.nan
                 else:
                     mat[i,j,:,:] = np.array(self.mods[i][j].seisPropGrids()[:-1])
+
+        # remove all nan layer
+        iLayerDelete = []
+        for iLayer in range(mat.shape[-1]):
+            for k in range(mat.shape[-2]):
+                if np.all(np.isnan(mat[:,:,k,iLayer])):
+                    iLayerDelete.append(iLayer)
+                    break
+        mat = np.delete(mat,iLayerDelete,-1)
+
         matSmooth = mat.copy()
         print('smoothing')
         import tqdm
@@ -161,6 +170,7 @@ class Model3D(GeoGrid):
             for j in range(n):
                 if not self.mask[i,j]:
                     grp = self.mods[i][j].seisPropGrids()[-1]
+                    grp = np.delete(grp,iLayerDelete,-1)
                     inProfiles = [p for p in matSmooth[i,j,:,:]] + [grp]
                     self.mods[i][j] = Model1D_Puregird(inProfiles,self.mods[i][j].info)
 

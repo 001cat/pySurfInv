@@ -174,13 +174,15 @@ class OceanSeisRuan(SeisModel):  # https://doi.org/10.1016/j.epsl.2018.05.035
         Ju = 1/(72.45-0.01094*(therModel.T-273.15)+1.75*therModel.P/1e9)*1e-9
         if YaTaJu:
             Ju = 1/(72.45-0.01094*(therModel.T-273.15)+1.987*therModel.P/1e9)*1e-9
-        J1,J2 = self._calQ_ruan(therModel.T,therModel.P,period=period,damp=damp)
+        J1,J2,Tn = self._calQ_ruan(therModel.T,therModel.P,period=period,damp=damp,verbose=True)
         self.zdeps = therModel.zdeps
         self.vs    = 1/np.sqrt(therModel.rho*Ju*J1)
+        # if np.any(Tn>1):
+        #     self.vs[Tn>1] = np.clip(self.vs[Tn>1] * (1-(Tn[Tn>1]-1)/0.001 * 0.078),a_min=0,a_max=10)
         self.vs_unrelaxed = 1/np.sqrt(therModel.rho*Ju)
         self.qs    = J1/J2
     @staticmethod
-    def _calQ_ruan(T,P,period,damp=True):
+    def _calQ_ruan(T,P,period,damp=True,verbose=False):
         ''' calculate quality factor follow Ruan+(2018) 
         T: temperature in K
         P: pressure in Pa
@@ -257,8 +259,10 @@ class OceanSeisRuan(SeisModel):  # https://doi.org/10.1016/j.epsl.2018.05.035
         J2e = tau_ns
         J1 = 1+J1b+J1p
         J2 = J2b+J2p+J2e
-
-        return J1,J2
+        if verbose:
+            return J1,J2,calTn(T,P)
+        else:
+            return J1,J2
 
 
 if __name__ == '__main__':

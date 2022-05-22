@@ -343,6 +343,12 @@ class OceanMantle_ThermBsplineHybrid(OceanMantle_CascadiaQ):
             l[l<-25] = -25
             lam = 1/(1+np.exp(-l))
             return y1*(1-lam)+y2*lam
+        def merge2(x,y1,y2,xL,xH):
+            vss = list(y1[x<xL]) + list(y2[x>xH])
+            xs  = list(x[x<xL])  + list(x[x>xH])
+            from scipy.interpolate import CubicSpline
+            return CubicSpline(xs, vss)(x)
+
         def meltStart(age):
             therMod = HSCM(age=age)
             P = therMod.P/1e9
@@ -354,8 +360,11 @@ class OceanMantle_ThermBsplineHybrid(OceanMantle_CascadiaQ):
         # vs = merge(z,seisMod.vs/1000,self.bspl(z)*np.array([0]+list(self.parm['Vs']))+seisMod.vs/1000,
         #            xL=10,xK=20,xH=40,s=1/3)
         zMelt = meltStart(max(1e-3,self.parm['ThermAge']))-hCrust
-        vs = merge(z,seisMod.vs/1000,self._bspl(z,nBasis)*np.array([0]+list(self.parm['Vs']))+seisMod.vs/1000,
-                   xL=zMelt,xK=zMelt+10,xH=zMelt+30,s=1/3)
+        # vs = merge(z,seisMod.vs/1000,self._bspl(z,nBasis)*np.array([0]+list(self.parm['Vs']))+seisMod.vs/1000,
+        #            xL=zMelt,xK=zMelt+10,xH=zMelt+30,s=1/3)
+        vs = merge2(z,seisMod.vs/1000,self._bspl(z,nBasis)*np.array([0]+list(self.parm['Vs']))+seisMod.vs/1000,
+                   xL=zMelt,xH=(zMelt+hCrust)*1.7-hCrust)
+                   
         self._debug_zMelt = zMelt
         return vs
 

@@ -3,6 +3,8 @@ from netCDF4 import Dataset
 from Triforce.utils import GeoMap
 from Triforce.pltHead import *
 
+from IPython import embed
+
 def plotCascadiaSlab(lon1,lat1,lon2,lat2):
     from geographiclib.geodesic import Geodesic
     with Dataset('/home/ayu/Projects/Cascadia/Models/Slab2_Cascadia/cas_slab2_dep_02.24.18.grd') as dset:
@@ -47,7 +49,7 @@ def plotMORLocation(lon1,lat1,lon2,lat2):
     elif abs(lat1-lat2)<0.01:
         x = p.xy[0][0]+360
     else:
-        x = Geodesic.WGS84.Inverse(lat1,lon1,p.xy[1][0],p.xy[0][0])['s12']
+        x = Geodesic.WGS84.Inverse(lat1,lon1,p.xy[1][0],p.xy[0][0])['s12']/1000
     plt.plot(x,0,'^',markersize=10,markerfacecolor='r',clip_on=False,zorder=100)
 
 def plotCascadiaSlab4Map(m,levels=[60,75,90,120,150]):

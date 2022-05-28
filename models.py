@@ -49,6 +49,8 @@ def buildModel1D(ymlFile,localInfo={},default='Cascadia_Oceanic'):
         return rawDict
 
     def initModel(rawDict):
+        if rawDict is None:
+            return None
         modelType = rawDict['Info'].get('ModelType',default)
         try:
             mod = modelTypeDict[modelType]()

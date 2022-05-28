@@ -6,7 +6,7 @@ from pySurfInv.point import PostPoint
 from Triforce.utils import GeoGrid,savetxt
 from Triforce.obspyPlus import randString
 from Triforce.pltHead import *
-from Triforce.customPlot import cvcpt,rbcpt
+from Triforce.customPlot import cvcpt,rbcpt,addAxes,addCAxes
 
 def mapSmooth(lons,lats,z,tension=0.0, width=50.):
     lons = lons.round(decimals=4)
@@ -254,6 +254,12 @@ class Model3D(GeoGrid):
             x = np.linspace(lon1,lon2,301)
         XX,YY = np.meshgrid(x,y)
         return XX,YY,z,moho,topo
+    def section_rel(self,lon1,lat1,lon2,lat2):
+        XX,YY,z,moho,topo = self.section(lon1,lat1,lon2,lat2)
+        if not hasattr(self,'_zAvg'):
+            self._zAvg = np.array([self.mapview(dep).mean() for dep in YY[:,0]])
+        zAvg2D = np.repeat(self._zAvg.reshape((len(self._zAvg),1)),z.shape[1],axis=1)
+        return XX,YY,(z - zAvg2D)/zAvg2D*100,moho,topo
     def plotSection_OLD(self,lon1,lat1,lon2,lat2,vmin=4.1,vmax=4.4,cmap=cvcpt,maxD=200,shading='gouraud'):
         XX,YY,Z,moho = self.section(lon1,lat1,lon2,lat2)
         plt.figure(figsize=[8,4.8])
@@ -269,12 +275,18 @@ class Model3D(GeoGrid):
         plt.gca().invert_yaxis()
 
     def plotSection(self,lon1,lat1,lon2,lat2,vCrust=[3.0,4.0],vMantle=[4.0,4.5],cmap=cvcpt,
-                    maxD=200,shading='gouraud',title=None,decorateFuns=[]):
-        from Triforce.customPlot import addAxes,addCAxes
-        XX,YY,Z,moho,topo = self.section(lon1,lat1,lon2,lat2)
+                    maxD=200,shading='gouraud',title=None,decorateFuns=[],figsize=[12,5],
+                    profile_labels=None,rel=False,real_ratio=False):
+        if rel:
+            XX,YY,Z,moho,topo = self.section_rel(lon1,lat1,lon2,lat2) # show relative
+        else:
+            XX,YY,Z,moho,topo = self.section(lon1,lat1,lon2,lat2)   # show absolute
+
         mask = ~(YY <= np.tile(moho,(YY.shape[0],1)))
         Z_crust = np.ma.masked_array(Z,mask=mask)
-        fig = plt.figure(figsize=[12,5])
+
+        # create axes frame, ax1 for topo, ax2 for structure. cax1: crust in ax2. cax2: mantle in ax2
+        fig = plt.figure(figsize=figsize)
         ax2 = addAxes([0,0.18,1,0.65])
         bbox = ax2.get_position()
         x,y,w,h = bbox.x0,bbox.y0,bbox.width,bbox.height
@@ -294,9 +306,8 @@ class Model3D(GeoGrid):
         ax1.set_ylim(np.nanmin(topo_plot)*1000-100, np.nanmax(topo_plot)*1000.+300.)
         # ax1.plot(XX[0,:],np.zeros(XX.shape[1]),'--k',lw=0.5)
         
-        
-
-        ax1.set_title(title)
+        if title is not None:
+            ax1.set_title(title)
 
         plt.axes(ax2)
         plt.pcolormesh(XX,YY,Z,shading=shading,cmap=cmap,vmin=vMantle[0],vmax=vMantle[1])
@@ -309,8 +320,25 @@ class Model3D(GeoGrid):
 
         for foo in decorateFuns:
             foo(lon1,lat1,lon2,lat2)
-            
-        return fig,ax1,ax2
+
+        if real_ratio:
+            dist = Geodesic.WGS84.Inverse(lat1,lon1,lat2,lon2)['s12']/1000
+            w0 = ax2.get_position().width*plt.gcf().get_figwidth()
+            h0 = ax2.get_position().height*plt.gcf().get_figheight()
+            w1 = dist/maxD*h0/plt.gcf().get_figwidth()
+            for ax in [ax1,ax2,cax1,cax2]:
+                box = ax.get_position()
+                box.intervalx[1] = box.intervalx[0] + w1
+                ax.set_position(box)
+
+        if profile_labels:
+            plt.axes(ax1)
+            x0,x1 = ax1.get_xlim()
+            y0,y1 = ax1.get_ylim()
+            plt.text(x0,y1,profile_labels[0],va='bottom',ha='center',fontweight='bold',fontsize=20,clip_on=False,zorder=100)
+            plt.text(x1,y1,profile_labels[1],va='bottom',ha='center',fontweight='bold',fontsize=20,clip_on=False,zorder=100)
+
+        return fig,ax1,ax2,cax1,cax2
 
     def _plotBasemap(self,loc='Cascadia',ax=None):
         from Triforce.customPlot import plotLocalBase

@@ -290,10 +290,10 @@ class OceanMantle_CascadiaQ(OceanMantle):
     def __init__(self, parm, prop={}) -> None:
         super().__init__(parm, prop)
         self.prop.update({'LayerName':'OceanMantle_CascadiaQ','Group':'mantle'})
-    def _calOthers(self, z, vs, topDepth=None, **kwargs):
+    def _calOthers(self, z, vs, topDepth=None, period=1, **kwargs):
         vp,rho,qs,qp = super()._calOthers(z, vs, **kwargs)
         from pySurfInv.OceanSeis import OceanSeisRuan,HSCM
-        seisMod = OceanSeisRuan(HSCM(age=max(1e-3,self.parm['ThermAge']),zdeps=topDepth+z),period=1)
+        seisMod = OceanSeisRuan(HSCM(age=max(1e-3,self.parm['ThermAge']),zdeps=topDepth+z),period=period)
         qs = seisMod.qs;qs[qs>5000] = 5000
         return vp,rho,qs,qp
 
@@ -446,7 +446,7 @@ def buildSeisLayer(parm:dict,typeID,BrownianConvert=True) -> SeisLayer:
     return seisLayer
     
 if __name__ == '__main__':
-    from brownian import BrownianVar
+    from pySurfInv.brownian import BrownianVar
     a = buildSeisLayer({'H':10,'Vs':[3.2,3.7]},'OceanCrust')
     b = buildSeisLayer({'H':10,'Vs':[
         BrownianVar(3.2,3.1,3.3,0.02),

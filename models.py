@@ -29,38 +29,7 @@ def _calForward(inProfile,wavetype='Ray',periods=[5,10,20,40,60,80]):
     return cr0[:nper]
 
 
-def buildModel1D(ymlFile,localInfo={},default='Cascadia_Oceanic'):
-    modelTypeDict = {
-        'General'                           : Model1D,
-        'MCInv'                             : Model1D_MCinv,
-        'Cascadia_Oceanic'                  : Model1D_Cascadia_Oceanic,
-        'Cascadia_Continental'              : Model1D_Cascadia_Continental
-    }
 
-    def loadRawDict(ymlFile):
-        if ymlFile is None:
-            return None
-        if type(ymlFile) is dict:
-            rawDict = ymlFile
-        else:
-            import yaml
-            with open(ymlFile, 'r') as f:
-                rawDict = yaml.load(f,Loader=yaml.FullLoader)
-        return rawDict
-
-    def initModel(rawDict):
-        if rawDict is None:
-            return None
-        modelType = rawDict['Info'].get('ModelType',default)
-        try:
-            mod = modelTypeDict[modelType]()
-            mod.loadYML(rawDict,localInfo)
-        except:
-            raise ValueError(f'Error: ModelType {modelType} not supported!')
-        return mod
-
-    return initModel(loadRawDict(ymlFile))
-    
 
 
 class Model1D():
@@ -338,11 +307,12 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
         return layersD
 
     def seisPropGrids(self,refLayer=False):
+        period = self.info.get('period',1)
         z0 = -max(self.info.get('topo',0),0)
         hCrust = np.sum([l.H() if l.prop['Group'] == 'crust' else 0 for l in self.layers])
         z,vs,vp,rho,qs,qp,grp = [],[],[],[],[],[],[]
         for layer in self.layers:
-            z1,vs1,vp1,rho1,qs1,qp1 = layer.seisPropGrids(topDepth=z0,hCrust=hCrust)
+            z1,vs1,vp1,rho1,qs1,qp1 = layer.seisPropGrids(topDepth=z0,hCrust=hCrust,period=period)
             z += list(z1+z0)
             vs += list(vs1); vp += list(vp1); rho += list(rho1); qs += list(qs1); qp += list(qp1)
             grp += [layer.prop['Group']]*len(z1)
@@ -616,7 +586,38 @@ class Model1D_Cascadia_Continental(Model1D_MCinv):
         return True
 
 
+def buildModel1D(ymlFile,localInfo={},default='Cascadia_Oceanic') -> Model1D:
+    modelTypeDict = {
+        'General'                           : Model1D,
+        'MCInv'                             : Model1D_MCinv,
+        'Cascadia_Oceanic'                  : Model1D_Cascadia_Oceanic,
+        'Cascadia_Continental'              : Model1D_Cascadia_Continental
+    }
 
+    def loadRawDict(ymlFile):
+        if ymlFile is None:
+            return None
+        if type(ymlFile) is dict:
+            rawDict = ymlFile
+        else:
+            import yaml
+            with open(ymlFile, 'r') as f:
+                rawDict = yaml.load(f,Loader=yaml.FullLoader)
+        return rawDict
+
+    def initModel(rawDict):
+        if rawDict is None:
+            return None
+        modelType = rawDict['Info'].get('ModelType',default)
+        try:
+            mod = modelTypeDict[modelType]()
+            mod.loadYML(rawDict,localInfo)
+        except:
+            raise ValueError(f'Error: ModelType {modelType} not supported!')
+        return mod
+
+    return initModel(loadRawDict(ymlFile))
+    
 
 if __name__ == '__main__':
     mod = Model1D_Cascadia_Oceanic()

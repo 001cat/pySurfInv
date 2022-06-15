@@ -1,4 +1,5 @@
 import numpy as np
+from Triforce.math import logQuad
 
 '''
 Next version of class for elastic/anelastic model to replace OceanSeis.py
@@ -71,20 +72,25 @@ class HSCM(TherModel):
                     z1 = z2
             # print((Da*z1 + Tp-T0)/f(z1) + T0,(Da*z0 + Tp-T0)/f(z0) + T0)
             Tm = (Da*z1 + Tp-T0)/f(z1) + T0
-            return Tm
+            z_adiaBegin = z0
+            return Tm,z_adiaBegin
         C2K = 273.15
         zdeps = self.zdeps
         age   = self.age
         ''' temperature calculated from half space cooling model, topography change ignored''' 
         from scipy.special import erf
         T0 = 0; Da=0.4; T_adiabatic = Tp + zdeps*Da
-        Tm = calTm(T0,Tp,Da,kappa,age)
+        Tm,z_adiaBegin = calTm(T0,Tp,Da,kappa,age)
 
         theta = erf(zdeps*1e3/(2*np.sqrt(age*365*24*3600*1*(kappa/1e-6))))# suppose kappa=1e-6
         T = (Tm-T0)*theta+T0
         try:
-            adiaBegin = np.where(np.diff(T)/np.diff(zdeps) < Da)[0][0]
-            T[adiaBegin:] = T_adiabatic[adiaBegin:]
+            # adiaBegin = np.where(np.diff(T)/np.diff(zdeps) < Da)[0][0]
+            adiaBegin = np.where(zdeps > z_adiaBegin)[0][0]
+            if adiaBegin == 0:
+                T = T_adiabatic
+            else:
+                T[adiaBegin:] = T_adiabatic[adiaBegin:]
         except:
             pass
         # return Tp*np.ones(self.zdeps.shape)
@@ -179,8 +185,9 @@ class OceanSeisRuan(SeisModel):  # https://doi.org/10.1016/j.epsl.2018.05.035
         self.vs    = 1/np.sqrt(therModel.rho*Ju*J1)
         # if np.any(Tn>1):
         #     self.vs[Tn>1] = np.clip(self.vs[Tn>1] * (1-(Tn[Tn>1]-1)/0.001 * 0.078),a_min=0,a_max=10)
-        self.vs_unrelaxed = 1/np.sqrt(therModel.rho*Ju)
+        self.vs_no_anelastic = 1/np.sqrt(therModel.rho*Ju)
         self.qs    = J1/J2
+        self._Tn = Tn
     @staticmethod
     def _calQ_ruan(T,P,period,damp=True,verbose=False):
         ''' calculate quality factor follow Ruan+(2018) 
@@ -189,12 +196,15 @@ class OceanSeisRuan(SeisModel):  # https://doi.org/10.1016/j.epsl.2018.05.035
         period: seismic wave period in second
         '''
         from scipy.special import erf
+        
         def calTn(T,P): # solidus given pressure and temperature
             P = P/1e9
-            if damp:
+            if damp is True:
                 Tm = -5.1*P**2 + 92.5*P + 1120.6 + 273.15
-            else:
+            elif damp is False:
                 Tm = -5.1*P**2 + 132.9*P + 1120.6 + 273.15
+            else:
+                Tm = damp
             return T/Tm
         def calTauM(T,P): # Maxwell time for viscous relaxation
             def A_eta(Tn):
@@ -263,6 +273,169 @@ class OceanSeisRuan(SeisModel):  # https://doi.org/10.1016/j.epsl.2018.05.035
             return J1,J2,calTn(T,P)
         else:
             return J1,J2
+
+class OceanSeisJack(SeisModel):  # https://doi.org/10.1016/j.pepi.2010.09.005
+    '''
+    Jackson & Faul, 2010: https://doi.org/10.1016/j.pepi.2010.09.005
+    Migrated from William Shinevar's matlab function by Ayu, 20220603
+    '''
+    def __init__(self,therModel=None,gs=1e-3,period=1) -> None:
+        if therModel is not None:
+            self.fromThermal(therModel,gs,period)
+        else:
+            self.zdeps = None
+            self.vs    = None
+    def fromThermal(self,therMod,gs=1e-3,period=1):
+        self._therMod = therMod
+        self.zdeps = therMod.zdeps
+        J1,J2,_ = self.creep10(therMod.T,gs,therMod.P,omega=np.pi*2/period)
+        Ju = 1/(66.5-0.0136*(therMod.T-273.15-900)+1.8*(therMod.P/1e9-0.2))*1e-9
+        self.vs = 1/np.sqrt(therMod.rho*Ju*J1)
+        self.qs = J1/J2
+        self.vs_no_anelastic = 1/np.sqrt(therMod.rho*Ju)
+        
+    @staticmethod
+    def creep10(T,gs,pres,omega):
+        try:
+            len(T);Te = np.array(T)
+        except:
+            Te = np.array([T])
+
+        Tr = 1173; iTr = 1/Tr   # reference temperature in K
+        Pr = 0.2e9; PT = Pr/Tr  # reference pressure in Pa
+        gsr = 1.34e-5           # reference grain size in m
+
+        tauLo,tauHo,tauMo = 1E-3,1E7,3.02E7     #reference relaxation time
+
+        deltaB = 1.04           # background relaxation strength
+        alpha = 0.274           # background frequency exponent
+
+        ma = 1.31               # anelastic grain size exponent
+        mv = 3                  # viscous grain size exponent
+        EB = 3.6E5              # activation energy for background and peak
+        AV = 1E-5               # activation volume
+        R = 8.314
+        AVR  = AV/R; ER = EB/R; gr=gs/gsr
+
+        # peak parameters:
+        tauPo = 3.98E-4;        # reference peak relaxation time,
+        deltaP = 0.057;         # peak relaxation strength pref (orig 0.057)
+        sig = 4;                # peak width (orig 4)
+        cp = deltaP*((2*np.pi)**(-0.5))/sig;       # peak integration const.
+
+        # relaxation times eqs. 9 and 10
+        taut = np.exp((ER)*(1/Te-iTr))*np.exp(AVR*((pres/Te)-PT))
+        tauH = tauHo*(gr**ma)*taut
+        tauL = tauLo*(gr**ma)*taut
+        tauP = tauPo*(gr**ma)*taut
+        tauM = tauMo*(gr**mv)*taut
+        # initialize arrays
+        # sT = size(Te)
+        on  = np.ones(Te.shape)
+        ij1 = np.zeros(Te.shape); ij2 = np.zeros(Te.shape)
+        ip1 = np.zeros(Te.shape); ip2 = np.zeros(Te.shape)
+
+        # from scipy import integrate
+        def J1anel(tau):
+            return tau**(alpha-1) / (1+(omega*tau)**2)
+        def J2anel(tau):
+            return tau**(alpha) / (1+(omega*tau)**2)
+        def J1p(tauP):
+            def _J1p(tau):
+                return (1/tau)*np.exp(-0.5*(np.log(tau/tauP)/sig)**2)/(1+(omega*tau)**2)
+            return _J1p
+        def J2p(tauP):
+            def _J2p(tau):
+                return np.exp(-0.5*(np.log(tau/tauP)/sig)**2)/(1+(omega*tau)**2)
+            return _J2p
+            
+        ij1 = np.array([logQuad(J1anel,l,h) for l,h in zip(tauL,tauH)])
+        ij2 = np.array([logQuad(J2anel,l,h) for l,h in zip(tauL,tauH)])
+        ip1 = np.array([logQuad(J1p(p),0,h) for p,h in zip(tauP,tauH)])
+        ip2 = np.array([logQuad(J2p(p),0,h) for p,h in zip(tauP,tauH)])
+
+        Jb1 = alpha*deltaB*ij1/(tauH**alpha-tauL**alpha)
+        Jb2 = omega*alpha*deltaB*ij2/(tauH**alpha-tauL**alpha)
+        Jp1 = cp*ip1
+        Jp2 = cp*omega*ip2
+
+        J1 = on + Jb1 + Jp1
+        J2 = (Jb2 + Jp2) + 1/(omega*tauM)
+        fM = 1/tauM
+
+        # to test: J1,J2,fM = creep10(1000+273.15,1e-3,2e9,2*np.pi/1)
+
+        return J1,J2,fM
+
+class OceanSeisPM13(SeisModel): # http://dx.doi.org/10.1016/j.epsl.2013.08.022
+    def __init__(self,therModel=None,period=1) -> None:
+        if therModel is not None:
+            self.fromThermal(therModel,period)
+        else:
+            self.zdeps = None
+            self.vs    = None
+    def fromThermal(self, therModel,period=1):
+        Ju = 1/(72.66-0.00871*(therModel.T)+2.04*therModel.P/1e9)*1e-9
+
+        E = 402.9e3 #J/mol
+        Va = 7.81e-6 #m^3/mol
+        R = 8.314 # J/(mol*K)
+        Pr = 1.5e9 #Pa
+        Tr = 1473 #K
+        eta0 = np.power(10,22.38)
+        aStar = np.exp((E+Pr*Va)/(R*Tr) - (E+therModel.P*Va)/(R*therModel.T))
+        eta = eta0/aStar
+        
+        tauM = Ju*eta
+        fPrime = tauM*1/period
+
+        poly1d = np.poly1d([3.9461e-9,-3.4761e-7,9.9473e-6,-5.7175e-5,-2.3616e-3,0.054332,0.55097])
+        F = poly1d(np.log(fPrime))
+        F[fPrime > 1e13] = 1
+
+
+        J1=Ju/F
+        vs = 1/np.sqrt(therModel.rho*J1)
+        self.zdeps = therModel.zdeps
+        self.vs    = vs
+
+
+def behn2009Shear(freq,d,T,P,coh=100):
+    '''
+        Behn+ 2009: https://doi.org/10.1016/j.epsl.2009.03.014
+        modified from William Shinevar's matlab function by Ayu, 20220603
+
+        frequency is frequency of seismic waves (Hz).
+        d is the estimated grain size of the mantle in meters
+        t is the temperature in C
+        p is the pressure in GPa
+    '''
+
+    T=T+273.1;      # convert to K
+    pqref=1.09;     # reference grain size exponenet
+    pq=1            # grain size exponent
+    Tqref=1265      # ?C, reference temperature
+    dqref=1.24e-5   # m, reference grain size
+    Eqref=505e3     # J/mol, reference activation energy
+    Vqref=1.2e-5    # reference activation volume m^3/mol
+    Bo=1.28e8       # prefactor for Q for omega=0.122 s^-1
+    Eq=420e3        # activation energy
+    Vq=1.2e-5       # activation volume
+    cohref=50       # H/10^6 Si
+    R=8.314
+    Pqref=300e6     # reference pressure of 300 MPa
+    rq=1.2
+    alpha=0.27
+
+    B=Bo*dqref**(pq-pqref)*(coh/cohref)**rq*np.exp(((Eq+Pqref*Vq)-(Eqref+Pqref*Vqref))/R/Tqref)
+    Qinv=(B*d**(-1*pq)/freq*np.exp(-(Eq+P*1e9*Vq)/R/T))**alpha;#anelastic factor
+    F=(1/np.tan(np.pi*alpha/2))/2
+    shearFactor=(1-F*Qinv)**2
+    return Qinv,shearFactor
+
+# Qinv,shearFactor = behn2009Shear(1,1e-3,1000,2,100)
+# J1,J2,_ = seisJack.creep10(1000+273.15,1e-3,2e9,2*np.pi/1)
+
 
 
 if __name__ == '__main__':

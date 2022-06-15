@@ -10,6 +10,7 @@ class TherModel():
 
 class HSCM(TherModel):
     def __init__(self, age, zdeps=np.linspace(0,200,200),rho0=3.43e3,Tp=1325,kappa=1e-6) -> None:
+        ''' Tp in celsius '''
         self.age   = age
         self.zdeps = zdeps
         self.P     = self._calP()
@@ -85,6 +86,7 @@ class OceanSeisYaTa(seisModel):  # https://doi.org/10.1002/2016JB013316
         vs = 1/np.sqrt(therModel.rho*Ju)
         self.zdeps = therModel.zdeps
         self.vs    = vs
+
 class OceanSeisStix(seisModel): # https://doi.org/10.1029/2004JB002965
     def loadThermal(self, therModel):
         vs = 4.77+0.038*therModel.zdeps/29.80-0.000378*(therModel.T-300)

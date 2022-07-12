@@ -232,12 +232,11 @@ class Model3D(GeoGrid):
                 if not mask[i,j]:
                     vsMap[i,j] = self.mods[i][j].value(depth)
         return vsMap
-    def section(self,lon1,lat1,lon2,lat2):
+    def section(self,lon1,lat1,lon2,lat2,y=np.linspace(0,200-0.01,201),xtype='auto'):
         # lon1,lat1,lon2,lat2 = -131+360,46,-125+360,43.8
         geoDict = Geodesic.WGS84.Inverse(lat1,lon1,lat2,lon2)
         # lats,lons = [],[]
         x = np.linspace(0,geoDict['s12'],301)/1000
-        y = np.linspace(0,200-0.01,201)
         z = np.zeros((len(y),len(x)))
         moho = np.zeros(len(x))
         topo = np.zeros(len(x))
@@ -248,10 +247,14 @@ class Model3D(GeoGrid):
             moho[i]= self.moho(tmp['lat2'],tmp['lon2'])
             topo[i]= self.topo(tmp['lat2'],tmp['lon2'])
         z = np.ma.masked_array(z,np.isnan(z))
-        if abs(lon1-lon2)<0.01:
+        if xtype == 'km':
+            pass
+        elif xtype == 'lat' or (xtype == 'auto' and abs(lon1-lon2)<0.01):
             x = np.linspace(lat1,lat2,301)
-        elif abs(lat1-lat2)<0.01:
+        elif xtype == 'lon' or (xtype == 'auto' and abs(lat1-lat2)<0.01):
             x = np.linspace(lon1,lon2,301)
+        else:
+            raise ValueError(f'Wrong xtype: {xtype}')
         XX,YY = np.meshgrid(x,y)
         return XX,YY,z,moho,topo
     def section_rel(self,lon1,lat1,lon2,lat2):

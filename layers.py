@@ -368,6 +368,12 @@ class OceanMantle_ThermBsplineHybrid(OceanMantle_CascadiaQ):
         self._debug_zMelt = zMelt
         return vs
 
+class OceanMantle_ThermBsplineHybridConstQ(OceanMantle_ThermBsplineHybrid):
+    def _calOthers(self, z, vs, topDepth=None, period=1, **kwargs):
+        vp,rho,_,_ = super()._calOthers(z, vs, **kwargs)
+        qs  = np.array( [150.]  * len(z) )
+        qp  = np.array( [1400.] * len(z) )
+        return vp,rho,qs,qp
 
 typeDict = {
         'PureLayer'                         : PureLayer,

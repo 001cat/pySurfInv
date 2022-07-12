@@ -391,7 +391,8 @@ typeDict = {
         'OceanSediment_Cascadia'            : OceanSediment_Cascadia,
         'OceanMantle_CascadiaQ'             : OceanMantle_CascadiaQ,
         'OceanMantle_CascadiaQ_compatible'  : OceanMantle_CascadiaQ_20220305SingleLayerClass,
-        'OceanMantle_ThermBsplineHybrid'    : OceanMantle_ThermBsplineHybrid
+        'OceanMantle_ThermBsplineHybrid'    : OceanMantle_ThermBsplineHybrid,
+        'OceanMantle_ThermBsplineHybridConstQ': OceanMantle_ThermBsplineHybridConstQ
     }
 oldTypeDict = { # to convert previous layer notes to new layer type id, type_mtype_stype: new type ID
         'water_water_'              : 'OceanWater',

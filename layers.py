@@ -370,7 +370,7 @@ class OceanMantle_ThermBsplineHybrid(OceanMantle_CascadiaQ):
 
 class OceanMantle_ThermBsplineHybridConstQ(OceanMantle_ThermBsplineHybrid):
     def _calOthers(self, z, vs, topDepth=None, period=1, **kwargs):
-        vp,rho,_,_ = super()._calOthers(z, vs, **kwargs)
+        vp,rho,_,_ = super()._calOthers(z, vs, topDepth=topDepth, period=period, **kwargs)
         qs  = np.array( [150.]  * len(z) )
         qp  = np.array( [1400.] * len(z) )
         return vp,rho,qs,qp

@@ -296,6 +296,7 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
             except:
                 layersD[layersK[grps.index('mantle')]]['ThermAge'] = localInfo['lithoAge']
 
+
         if 'mantleInitParmVs' in localInfo.keys():
             for i,vs in enumerate(localInfo['mantleInitParmVs']):
                 try:
@@ -308,11 +309,13 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
 
     def seisPropGrids(self,refLayer=False):
         period = self.info.get('period',1)
+        Qage = self.info.get('lithoAge',None) if self.info.get('lithoAgeQ',False) else None
         z0 = -max(self.info.get('topo',0),0)
         hCrust = np.sum([l.H() if l.prop['Group'] == 'crust' else 0 for l in self.layers])
         z,vs,vp,rho,qs,qp,grp = [],[],[],[],[],[],[]
         for layer in self.layers:
-            z1,vs1,vp1,rho1,qs1,qp1 = layer.seisPropGrids(topDepth=z0,hCrust=hCrust,period=period)
+            z1,vs1,vp1,rho1,qs1,qp1 = layer.seisPropGrids(
+                topDepth=z0,hCrust=hCrust,period=period,Qage=Qage)
             z += list(z1+z0)
             vs += list(vs1); vp += list(vp1); rho += list(rho1); qs += list(qs1); qp += list(qp1)
             grp += [layer.prop['Group']]*len(z1)

@@ -290,10 +290,11 @@ class OceanMantle_CascadiaQ(OceanMantle):
     def __init__(self, parm, prop={}) -> None:
         super().__init__(parm, prop)
         self.prop.update({'LayerName':'OceanMantle_CascadiaQ','Group':'mantle'})
-    def _calOthers(self, z, vs, topDepth=None, period=1, **kwargs):
+    def _calOthers(self, z, vs, topDepth=None, period=1, Qage=None, **kwargs):
         vp,rho,qs,qp = super()._calOthers(z, vs, **kwargs)
         from pySurfInv.OceanSeis import OceanSeisRuan,HSCM
-        seisMod = OceanSeisRuan(HSCM(age=max(1e-3,self.parm['ThermAge']),zdeps=topDepth+z),period=period)
+        Qage = self.parm['ThermAge'] if Qage is None else Qage
+        seisMod = OceanSeisRuan(HSCM(age=max(1e-3,Qage),zdeps=topDepth+z),period=period)
         qs = seisMod.qs;qs[qs>5000] = 5000
         return vp,rho,qs,qp
 

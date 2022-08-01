@@ -1,5 +1,5 @@
 import numpy as np
-from Triforce.math import logQuad
+from Triforce.mathPlus import logQuad
 
 '''
 Next version of class for elastic/anelastic model to replace OceanSeis.py

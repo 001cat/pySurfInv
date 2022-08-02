@@ -294,33 +294,33 @@ class PostPoint(Point):
                             fill=False,ec='k',rwidth=1.0)
                 plt.title(f'N = {self.accFinal.sum()}/{len(self.accFinal)}')
     def plotVsProfile(self,allAccepted=False):
-        fig = self.initMod.plotProfile(label='Initial')
+        ax = self.initMod.plotProfile(label='Initial')
         mod = self.avgMod.copy()
         indFinAcc = np.where(self.accFinal)[0]
         for i in range(min(len(indFinAcc),(self.N if allAccepted else 2000))):
             ind = indFinAcc[i] if allAccepted else random.choice(indFinAcc)
             mod._loadMC(self.MCparas[ind,:])
-            mod.plotProfile(fig=fig,color='grey',lw=0.1)
-        self.avgMod.plotProfile(fig=fig,label='Avg')
-        self.minMod.plotProfile(fig=fig,label='Min')
+            mod.plotProfile(ax=ax,color='grey',lw=0.1)
+        self.avgMod.plotProfile(ax=ax,label='Avg')
+        self.minMod.plotProfile(ax=ax,label='Min')
         plt.xlim(3.8,4.8)
         plt.legend()
-        return fig
+        return ax
     def plotVsProfileGrid(self,allAccepted=False,ax=None):
-        fig = self.initMod.plotProfileGrid(label='Initial',ax=ax)
-        if ax is None:
-            fig.set_figheight(8.4);fig.set_figwidth(5)
+        ax = self.initMod.plotProfileGrid(label='Initial',ax=ax)
+        # if ax is None:
+        #     fig.set_figheight(8.4);fig.set_figwidth(5)
         mod = self.avgMod.copy()
         indFinAcc = np.where(self.accFinal)[0]
         for i in range(min(len(indFinAcc),(self.N if allAccepted else 500))):
             ind = indFinAcc[i] if allAccepted else random.choice(indFinAcc)
             mod._loadMC(self.MCparas[ind,:])
-            mod.plotProfileGrid(fig=fig,color='grey',ax=ax,lw=0.1)
-        self.avgMod.plotProfileGrid(fig=fig,label='Avg',ax=ax)
-        self.minMod.plotProfileGrid(fig=fig,label='Min',ax=ax)
+            mod.plotProfileGrid(color='grey',ax=ax,lw=0.1)
+        self.avgMod.plotProfileGrid(label='Avg',ax=ax)
+        self.minMod.plotProfileGrid(label='Min',ax=ax)
         plt.xlim(3.0,4.8)
         plt.legend()
-        return fig
+        return ax
     
     # in testing
     def _check(self,step4uwalk=1000,stepLens=[]):

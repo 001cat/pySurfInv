@@ -60,32 +60,27 @@ def plotCascadiaSlab4Map(m,levels=[60,75,90,120,150]):
     plt.clabel(cs, fontsize=9, inline=True,colors='k')
 
 
-def plotLayer(h,v,axes=None,label=None,**kwargs):
-    if axes is None:
-        plt.figure(figsize=[5,7])
-        axes = plt.axes()
+def plotLayer(h,v,fig=None,ax=None,label=None,**kwargs):
+    if ax is None:
+        fig = plt.figure(figsize=[5,7]);ax = plt.gca()
     else:
-        plt.axes(axes)
+        plt.sca(ax); fig = plt.gcf()
     hNew = np.insert(np.repeat(np.cumsum(h),2)[:-1],0,0)
     vNew = np.repeat(v,2)
-    axes.plot(vNew,hNew,label=label,**kwargs)
-    if not axes.yaxis_inverted():
-        axes.invert_yaxis()
-    return axes
+    ax.plot(vNew,hNew,label=label,**kwargs)
+    if not ax.yaxis_inverted():
+        ax.invert_yaxis()
+    return ax
 def plotGrid(zdepth,v,fig=None,ax=None,label=None,**kwargs):
     if ax is None:
-        if fig is None:
-            fig = plt.figure(figsize=[5,7])
-        else:
-            plt.figure(fig.number)
+        fig = plt.figure(figsize=[5,7]);ax = plt.gca()
     else:
-        plt.axes(ax)
-        fig = plt.gcf()
+        plt.sca(ax); fig = plt.gcf()
     plt.plot(v,zdepth,label=label,**kwargs)
     ax = ax or fig.axes[0]
     if not ax.yaxis_inverted():
         ax.invert_yaxis()
-    return fig
+    return ax
 
 
 

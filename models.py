@@ -133,17 +133,17 @@ class Model1D():
     def plotProfile(self,type='vs',**kwargs):
         h,vs,vp,rho,qs,qp,_ = self.seisPropLayers()
         if type == 'vs':
-            fig = plotLayer(h,vs,**kwargs);plt.title('Vs')
+            ax = plotLayer(h,vs,**kwargs);plt.title('Vs')
         else:
             print('To be added...')
-        return fig
+        return ax
     def plotProfileGrid(self,type='vs',ax=None,**kwargs):
         z,vs,vp,rho,qs,qp,_ = self.seisPropGrids(refLayer=False)
         if type == 'vs':
-            fig = plotGrid(z,vs,ax=ax,**kwargs);plt.title('Vs')
+            ax = plotGrid(z,vs,ax=ax,**kwargs);plt.title('Vs')
         else:
             print('To be added...')
-        return fig
+        return ax
 
     @property
     def _refLayer(self):
@@ -481,6 +481,14 @@ class Model1D_Cascadia_Continental(Model1D_MCinv):
         grps = [buildSeisLayer(parm,typeID).prop['Group'] for typeID,parm in layersD.items()]
 
         topo = localInfo.get('topo',self.info.get('topo',0))
+        waterH = max(-topo,0)
+        if waterH > 0 and 'water' in grps:
+            try:
+                layersD[layersK[grps.index('water')]]['H'][0] = waterH
+            except:
+                layersD[layersK[grps.index('water')]]['H'] = waterH
+        elif waterH == 0 and 'water' in grps:
+            del layersD[layersK[grps.index('water')]]
 
         if 'sedthk' in localInfo.keys():
             try:

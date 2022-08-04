@@ -1,4 +1,3 @@
-from email.generator import Generator
 import random,time,os,tqdm
 import numpy as np
 import multiprocessing as mp
@@ -110,7 +109,9 @@ class Point(object):
                             setting=dict(self.initMod.toYML()),obs=self.obs,pid=pid)
 
         print(f'Time cost:{time.time()-timeStamp:.2f} ')
-
+    def copy(self):
+        from copy import deepcopy
+        return deepcopy(self)
 class PointCascadia(Point):
     def misfit(self,model=None):
         if model is None:
@@ -240,7 +241,7 @@ class PostPoint(Point):
             invdata    = inarr['arr_0']
             paraval       = invdata[:,2:11]
             self.Priparas = paraval[:,colOrder]
-    def plotDisp(self,ax=None):
+    def plotDisp(self,ax=None,ensemble=True):
         T,vel,uncer = self.obs['T'],self.obs['c'],\
                       self.obs['uncer']
         if ax is None:
@@ -249,10 +250,11 @@ class PostPoint(Point):
             plt.axes(ax)
         mod = self.avgMod.copy()
         indFinAcc = np.where(self.accFinal)[0]
-        for _ in range(min(len(indFinAcc),500)):
-            i = random.choice(indFinAcc)
-            mod._loadMC(self.MCparas[i,:])
-            plt.plot(T,mod.forward(T),color='grey',lw=0.1)
+        if ensemble:
+            for _ in range(min(len(indFinAcc),500)):
+                i = random.choice(indFinAcc)
+                mod._loadMC(self.MCparas[i,:])
+                plt.plot(T,mod.forward(T),color='grey',lw=0.1)
         plt.errorbar(T,vel,uncer,ls='None',color='k',capsize=3,capthick=2,elinewidth=2,label='Observation')
         plt.plot(T,self.initMod.forward(T),label='Initial')
         plt.plot(T,self.avgMod.forward(T),label='Avg accepted')
@@ -323,7 +325,39 @@ class PostPoint(Point):
         return ax
     
     # in testing
-    def _check(self,step4uwalk=1000,stepLens=[]):
+    def _check(self,step4uwalk=1000):
+        from scipy.ndimage import uniform_filter1d
+        iStart,iEnd = 0,step4uwalk
+        localThres,decayRates,localAccRates = [],[],[]
+        localAccContRates = []
+        # rates,localMins,localThres = [],[],[]
+        while iEnd <= len(self.misfits):
+            Ntail = step4uwalk//2
+            misfits = self.misfits[iStart:iEnd]
+            thres = max(misfits.min()*2,misfits.min()+0.5)
+            localAccI = misfits[-Ntail:]<thres
+            tmp = uniform_filter1d(misfits[-Ntail:][localAccI],31)
+            decayRate = max(0,-np.polyfit(np.arange(len(tmp)),tmp,1)[0]*Ntail)
+            ''' assume the decay continues if we add Ntail more model sampling '''
+            minmisfit_New = tmp.mean()-decayRate*1.5
+            thres_New = max(minmisfit_New*2,minmisfit_New+0.5)
+            # the ratio of models still accepted after more sampling applied
+            localAccContRate = (misfits[-Ntail:]<thres_New).sum()/localAccI.sum()  
+            # print(f'Step:{iStart//step4uwalk}: {localAccI.sum()} {decayRate} {misfits.min()}')
+            decayRates.append(decayRate);localAccRates.append(localAccI.sum()/Ntail)
+            localThres.append(thres);localAccContRates.append(localAccContRate)
+            iStart += step4uwalk; iEnd += step4uwalk
+        plt.figure()
+        plt.scatter(range(len(localThres)),localThres,s=100,c=localAccRates,
+                    norm=mpl.colors.BoundaryNorm([0,0.01,0.05,0.1,0.2,0.3,1],256))
+        plt.colorbar()
+        plt.figure()
+        sc = plt.scatter(range(len(localThres)),localThres,s=100,c=localAccContRates,
+                         norm=mpl.colors.BoundaryNorm([0,0.2,0.4,0.6,0.8,1.0],256))
+                         #s=np.clip(localAccRates,0,0.5)**2*400,
+        # plt.legend(*sc.legend_elements("sizes", num=6))
+        plt.colorbar()
+    def _check_deprecated(self,step4uwalk=1000,stepLens=[]):
         from scipy.ndimage.filters import uniform_filter1d
         iStart,iEnd = 0,step4uwalk
         rates,localMins,localThres = [],[],[]

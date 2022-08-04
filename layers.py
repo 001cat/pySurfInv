@@ -376,6 +376,14 @@ class OceanMantle_ThermBsplineHybridConstQ(OceanMantle_ThermBsplineHybrid):
         qp  = np.array( [1400.] * len(z) )
         return vp,rho,qs,qp
 
+class Prism(LandCrust):
+    def __init__(self,parm,prop={}) -> None:
+        super().__init__(parm,prop)
+        self.prop.update({'LayerName':'Prism','Group':'prism'})
+    def _calVs(self, z, **kwargs):
+        return np.linspace(self.parm['Vs'][0],self.parm['Vs'][1],len(z))
+
+
 typeDict = {
         'PureLayer'                         : PureLayer,
         'PureGrid'                          : PureGrid,
@@ -393,7 +401,8 @@ typeDict = {
         'OceanMantle_CascadiaQ'             : OceanMantle_CascadiaQ,
         'OceanMantle_CascadiaQ_compatible'  : OceanMantle_CascadiaQ_20220305SingleLayerClass,
         'OceanMantle_ThermBsplineHybrid'    : OceanMantle_ThermBsplineHybrid,
-        'OceanMantle_ThermBsplineHybridConstQ': OceanMantle_ThermBsplineHybridConstQ
+        'OceanMantle_ThermBsplineHybridConstQ': OceanMantle_ThermBsplineHybridConstQ,
+        'Prism'               : Prism
     }
 oldTypeDict = { # to convert previous layer notes to new layer type id, type_mtype_stype: new type ID
         'water_water_'              : 'OceanWater',

@@ -473,6 +473,127 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
 
         return True
 
+class Model1D_Cascadia_Prism(Model1D_MCinv):
+    def _loadLocalInfo(self, layersD, localInfo):
+        super()._loadLocalInfo(layersD, localInfo)
+        layersD = deepcopy(layersD)
+        layersGrp = {buildSeisLayer(parm,typeID).prop['Group']:typeID for typeID,parm in layersD.items()}
+
+        # water layer thickness
+        waterH = max(-localInfo.get('topo',self.info.get('topo',0)),0)
+        if 'water' in layersGrp.keys():
+            if waterH > 0:
+                layersD[layersGrp['water']]['H'] = waterH
+            elif waterH == 0:
+                del layersD[layersGrp['water']]
+        
+        # sediment thickness 
+        if 'sedthk' in localInfo.keys():
+            try:
+                layersD[layersGrp['sediment']]['H'][0] = localInfo['sedthk']
+            except:
+                layersD[layersGrp['sediment']]['H'] = localInfo['sedthk']
+        
+        # crust thickness 
+        if 'prismthk' in localInfo.keys():
+            try:
+                layersD[layersGrp['prism']]['H'][0] = localInfo['prismthk']
+            except:
+                layersD[layersGrp['prism']]['H'] = localInfo['prismthk']
+        
+        return layersD
+    def isgood(self,verbose=False):
+        import scipy.signal
+        def monoIncrease(a,eps=np.finfo(float).eps):
+            return np.all(np.diff(a)>=0)
+
+        z,vs,_,_,_,_,grp = self.seisPropGrids();grp = np.array(grp)
+        vsMantle    = vs[grp=='mantle']
+        vsSediment  = vs[grp=='sediment']
+        vsCrust     = vs[grp=='crust']
+        zMantle     = z[grp=='mantle']
+
+        '''
+        Vs jump between group is positive, contraint (5) in 4.2 of Shen et al., 2012
+        '''
+        for i in np.where((grp[1:]!=grp[:-1]))[0]:
+            if vs[i+1] < vs[i]:
+                return False
+
+        '''
+        All Vs < 4.9km/sec, contraint (6) in 4.2 of Shen et al., 2012
+        '''
+        if np.any(vs > 4.9):
+            return False
+
+        '''
+        Velocity in sediment and crust layers must increase with depth
+        '''
+        if not monoIncrease(vs[grp=='sediment']):
+            return False
+        if not monoIncrease(vs[grp=='crust']): 
+            return False
+
+        '''
+        Negative velocity gradient below moho
+        '''
+        # if vsMantle[1]>vsMantle[0]:
+        #     return False
+    
+        '''
+        Vs in crust < 4.3
+        '''
+        # if np.any(vsCrust > 4.3):
+        #     return False
+
+        '''
+        Vs at first fine layer in mantle is between 4.0 and 4.6
+        '''
+        # if vsMantle[0] < 4.0 or vsMantle[0] > 4.6:
+        #     return False
+
+        ''' 
+        Vs at last fine layer in mantle > 4.3 
+        '''
+        # if vsMantle[-1] < 4.3:
+        #     return False
+
+        '''
+        Vs > 4.0 below 80km
+        '''
+        # if np.any(vsMantle < 4.0):
+        #     return False
+
+        '''
+        Change in mantle < 15%, made by Ayu
+        '''
+        # if (vsMantle.max() - vsMantle.min()) > 0.15*vsMantle.mean():
+        #     return False
+
+        '''
+        Oscillation Limit, the difference between nearby local extrema < 10% of mean vs in mantle
+        '''
+        # osciLim = 0.1*vsMantle.mean()
+        # indLocMax = scipy.signal.argrelmax(vsMantle)[0]
+        # indLocMin = scipy.signal.argrelmin(vsMantle)[0]
+        # if len(indLocMax) + len(indLocMin) > 1:
+        #     indLoc = np.sort(np.append(indLocMax,indLocMin))
+        #     osci = abs(np.diff(vsMantle[indLoc]))
+        #     if len(np.where(osci > osciLim)[0]) >= 1:   # origin >= 1
+        #         return False
+
+        '''
+        velocity increase at bottom
+        '''
+        if (vsMantle[-1]-vsMantle[-2])/(zMantle[-1]-zMantle[-2]) <= 0:
+            return False
+
+        # temporary only
+        # if len(indLocMin) > 1:
+        #     return False
+
+        return True
+ 
 class Model1D_Cascadia_Continental(Model1D_MCinv):
     def _loadLocalInfo(self, layersD, localInfo):
         super()._loadLocalInfo(layersD, localInfo)
@@ -569,20 +690,20 @@ class Model1D_Cascadia_Continental(Model1D_MCinv):
         '''
         Change in mantle < 15%, made by Ayu
         '''
-        if (vsMantle.max() - vsMantle.min()) > 0.15*vsMantle.mean():
-            return False
+        # if (vsMantle.max() - vsMantle.min()) > 0.15*vsMantle.mean():
+        #     return False
 
         '''
         Oscillation Limit, the difference between nearby local extrema < 10% of mean vs in mantle
         '''
-        osciLim = 0.1*vsMantle.mean()
-        indLocMax = scipy.signal.argrelmax(vsMantle)[0]
-        indLocMin = scipy.signal.argrelmin(vsMantle)[0]
-        if len(indLocMax) + len(indLocMin) > 1:
-            indLoc = np.sort(np.append(indLocMax,indLocMin))
-            osci = abs(np.diff(vsMantle[indLoc]))
-            if len(np.where(osci > osciLim)[0]) >= 1:   # origin >= 1
-                return False
+        # osciLim = 0.1*vsMantle.mean()
+        # indLocMax = scipy.signal.argrelmax(vsMantle)[0]
+        # indLocMin = scipy.signal.argrelmin(vsMantle)[0]
+        # if len(indLocMax) + len(indLocMin) > 1:
+        #     indLoc = np.sort(np.append(indLocMax,indLocMin))
+        #     osci = abs(np.diff(vsMantle[indLoc]))
+        #     if len(np.where(osci > osciLim)[0]) >= 1:   # origin >= 1
+        #         return False
 
         '''
         velocity increase at bottom
@@ -602,6 +723,7 @@ def buildModel1D(ymlFile,localInfo={},default='Cascadia_Oceanic') -> Model1D:
         'General'                           : Model1D,
         'MCInv'                             : Model1D_MCinv,
         'Cascadia_Oceanic'                  : Model1D_Cascadia_Oceanic,
+        'Cascadia_Prism'                    : Model1D_Cascadia_Prism,
         'Cascadia_Continental'              : Model1D_Cascadia_Continental
     }
 

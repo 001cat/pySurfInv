@@ -352,7 +352,8 @@ class Model3D(GeoGrid):
             dlat,dlon = (maxlat-minlat)//5,(maxlon-minlon)//3
         else:
             minlon,maxlon,minlat,maxlat,dlon,dlat = loc
-        fig,m = plotLocalBase(minlon,maxlon,minlat,maxlat,dlat=dlat,dlon=dlon,resolution='l',ax=ax)
+        fig,m = plotLocalBase(minlon,maxlon,minlat,maxlat,resolution='l',ax=ax,
+                              gridlines={'dlat':dlat,'dlon':dlon})
         m.readshapefile('/home/ayu/Projects/Cascadia/Models/Plates/PB2002_boundaries','PB2002_boundaries',
             linewidth=2.0,color='orange')
         return fig,m

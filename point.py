@@ -18,7 +18,7 @@ class Point(object):
         T = self.obs['T']
         cP = model.forward(periods=T)
         if cP is None:
-            return 88888,0
+            return 88888,88888,0
         cO = self.obs['c']
         uncer = self.obs['uncer']
         N = len(T)

@@ -153,14 +153,14 @@ class OceanSediment(SeisLayerVs):
         qp  = np.array( [160] * len(z) )
         return vp,rho,qs,qp
 
-class OceanSediment_Prism(OceanSediment):
-    def __init__(self,parm,prop={}) -> None:
-        super().__init__(parm,prop)
-        self.prop.update({'LayerName':'OceanSediment_Prism','Group':'sediment'})
-    def _nFineLayers(self,**kwargs):
-        return  min(max(int(round(self.H(**kwargs)/2)),2),10)
-    def _calVs(self, z, **kwargs):
-        return np.linspace(0, self.H(**kwargs), len(z))
+# class OceanSediment_Prism(OceanSediment):
+#     def __init__(self,parm,prop={}) -> None:
+#         super().__init__(parm,prop)
+#         self.prop.update({'LayerName':'OceanSediment_Prism','Group':'sediment'})
+#     def _nFineLayers(self,**kwargs):
+#         return  min(max(int(round(self.H(**kwargs)/2)),2),10)
+#     def _calVs(self, z, **kwargs):
+#         return np.linspace(0, self.H(**kwargs), len(z))
 
 class OceanCrust(SeisLayerVs):
     def __init__(self,parm,prop={}) -> None:
@@ -389,7 +389,6 @@ typeDict = {
         'PureGrid'                          : PureGrid,
         'OceanWater'                        : OceanWater,
         'OceanSediment'                     : OceanSediment,
-        'OceanSediment_Prism'               : OceanSediment_Prism,
         'OceanCrust'                        : OceanCrust,
         'OceanCrust_Prism'                  : OceanCrust_Prism,
         'OceanMantle'                       : OceanMantle,

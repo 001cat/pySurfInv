@@ -508,7 +508,7 @@ class InvPointGenerator():
                 'Input/cascadia-ocean.yml',
                 'Input/cascadia-prism.yml',
                 'Input/cascadia-continent.yml'
-                )):
+                ),mantleInitParmVs=None):
         ptlon -= 360*(ptlon>180)
         pers,vels,sems = self.getDisp(ptlon,ptlat)
         uncers = upscale*sems; uncers[uncers<minUncer] = minUncer
@@ -523,7 +523,7 @@ class InvPointGenerator():
                 'topo':self.topo.value(ptlon,ptlat),
                 'lithoAge':self.lithoAge.value(ptlon,ptlat),
                 'sedthk':self.sedthkOce.value(ptlon,ptlat),
-                'mantleInitParmVs':self.mantleInitParmVs.value(ptlon,ptlat)
+                # 'mantleInitParmVs':self.mantleInitParmVs.value(ptlon,ptlat)
                 },periods=pers,vels=vels,uncers=uncers)
         elif self.topo.value(ptlon,ptlat) > 0 and loc in (None,'continent'):
             print(f'In continent')

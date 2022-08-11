@@ -510,6 +510,7 @@ class Model1D_Cascadia_Prism(Model1D_MCinv):
         z,vs,_,_,_,_,grp = self.seisPropGrids();grp = np.array(grp)
         vsMantle    = vs[grp=='mantle']
         vsSediment  = vs[grp=='sediment']
+        vsPrism     = vs[grp=='prism']
         vsCrust     = vs[grp=='crust']
         zMantle     = z[grp=='mantle']
 
@@ -532,6 +533,8 @@ class Model1D_Cascadia_Prism(Model1D_MCinv):
         if not monoIncrease(vs[grp=='sediment']):
             return False
         if not monoIncrease(vs[grp=='crust']): 
+            return False
+        if not monoIncrease(vsPrism): 
             return False
 
         '''

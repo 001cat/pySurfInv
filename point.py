@@ -504,8 +504,11 @@ class InvPointGenerator():
         sems = np.ma.masked_array(sems,mask=mask)
         return pers,vels,sems
 
-    def genPoint(self,ptlat,ptlon,upscale=2,minUncer=0.005,loc=None,
-                 setting=(None,None,None)):
+    def genPoint(self,ptlat,ptlon,upscale=2,minUncer=0.005,loc=None,setting=(
+                'Input/cascadia-ocean.yml',
+                'Input/cascadia-prism.yml',
+                'Input/cascadia-continent.yml'
+                )):
         ptlon -= 360*(ptlon>180)
         pers,vels,sems = self.getDisp(ptlon,ptlat)
         uncers = upscale*sems; uncers[uncers<minUncer] = minUncer
@@ -516,8 +519,7 @@ class InvPointGenerator():
         if self.oceanicPlateBoundary.contains_point((ptlon,ptlat)) and loc in (None,'ocean'):
             print(f'Inside ocean plate')
             outDir = 'OceanInv'
-            setting = setting[0] or 'Input/cascadia-ocean.yml'
-            p = PointCascadia(setting,{
+            p = PointCascadia(setting[0],{
                 'topo':self.topo.value(ptlon,ptlat),
                 'lithoAge':self.lithoAge.value(ptlon,ptlat),
                 'sedthk':self.sedthkOce.value(ptlon,ptlat),
@@ -526,8 +528,7 @@ class InvPointGenerator():
         elif self.topo.value(ptlon,ptlat) > 0 and loc in (None,'continent'):
             print(f'In continent')
             outDir = 'LandInv'
-            setting = setting[2] or 'Input/cascadia-continent.yml'
-            p = PointCascadia(setting,{
+            p = PointCascadia(setting[2],{
                 'topo':self.topo.value(ptlon,ptlat),
                 'sedthk':self.sedthk.value(ptlon,ptlat),
                 'crsthk':self.crsthk.value(ptlon,ptlat),
@@ -536,8 +537,7 @@ class InvPointGenerator():
         elif loc in (None,'prism'):
             print('In prism')
             outDir = 'PrismInv'
-            setting = setting[1] or 'Input/cascadia-prism.yml'
-            p = PointCascadia(setting,{
+            p = PointCascadia(setting[1],{
                 'topo':self.topo.value(ptlon,ptlat),
                 'sedthk':self.sedthkOce.value(ptlon,ptlat),
                 'prismthk':self.prismthk.value(ptlon,ptlat),

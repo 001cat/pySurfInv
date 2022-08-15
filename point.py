@@ -561,9 +561,28 @@ class InvPointGenerator():
                 'prismthk':self.prismthk.value(ptlon,ptlat),
                 'lithoAge':10
             },periods=pers,vels=vels,uncers=uncers)
-
         else:
             raise ValueError(f'Wrong location specificated {loc}')
+
+        from pySurfInv.utils import _dictIterModifier
+        def checker(v):
+            try:
+                isnan = bool(np.isnan(v))
+            except:
+                isnan = False
+            if isnan:
+                raise ValueError('nan value found')
+            else:
+                return False
+        def modifier(v):
+            return v
+        try:
+            _dictIterModifier(p.initMod.toYML(),checker,modifier)
+        except ValueError as e:
+            if str(e) == 'nan value found':
+                return None,None
+            else:
+                raise e
         p.pid = f'{ptlon+360*(ptlon<0):.1f}_{ptlat:.1f}'
         return p,outDir
 

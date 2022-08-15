@@ -21,7 +21,7 @@ class Point(object):
             return 88888,88888,0
         cO = self.obs['c']
         uncer = self.obs['uncer']
-        N = len(T)
+        N = cO.count()
         chiSqr = (((cO - cP)/uncer)**2).sum()
         misfit = np.sqrt(chiSqr/N)
         chiSqr =  chiSqr if chiSqr < 50 else np.sqrt(chiSqr*50.) 
@@ -80,17 +80,19 @@ class Point(object):
                             setting=dict(self.initMod.toYML()),obs=self.obs,pid=pid)
         if verbose == 'mp':
             print(f'Step {pid.split("_")[1]} Time cost:{time.time()-timeStamp:.2f} ')
-    def MCinvMP(self,outdir='MCtest',pid=None,runN=50000,step4uwalk=1000,nprocess=12,seed=None,priori=False,isgood=None):
+    def MCinvMP(self,outdir='MCtest',pid=None,runN=50000,step4uwalk=1000,nprocess=12,seed=None,priori=False,isgood=None,
+                verbose=True):
         if priori and outdir.split('_')[-1] != 'priori':
             outdir = '_'.join((outdir,'priori'))
         tmpDir = 'MCtmp'+randString(10)
         random.seed(seed); seed = random.random()
         pid = self.pid if pid is None else pid
 
-        print(f'Running MC inversion: {pid}')
+        if verbose:
+            print(f'Running MC inversion: {pid}')
 
-        argInLst = [ [tmpDir,f'tmp_{i:03d}_{pid}',step4uwalk,step4uwalk,i==0,seed+i,'mp',priori,isgood]
-                     for i in range(runN//step4uwalk)]
+        argInLst = [ [tmpDir,f'tmp_{i:03d}_{pid}',step4uwalk,step4uwalk,i==0,seed+i,
+                      'mp' if verbose else False,priori,isgood] for i in range(runN//step4uwalk)]
         timeStamp = time.time()
         pool = mp.Pool(processes=nprocess)
         pool.starmap(self.MCinv, argInLst)
@@ -107,8 +109,8 @@ class Point(object):
         os.makedirs(outdir,exist_ok=True)
         np.savez_compressed(f'{outdir}/{pid}.npz',mcTrack=mcTrack,
                             setting=dict(self.initMod.toYML()),obs=self.obs,pid=pid)
-
-        print(f'Time cost:{time.time()-timeStamp:.2f} ')
+        if verbose:
+            print(f'Time cost:{time.time()-timeStamp:.2f} ')
     def copy(self):
         from copy import deepcopy
         return deepcopy(self)
@@ -123,13 +125,19 @@ class PointCascadia(Point):
         cO = self.obs['c']
         uncer = self.obs['uncer']
 
-        N = len(T)
+        N = cO.count()
         # chiSqr = (((cO - cP)/uncer)**2).sum()
-
         bias = (cO - cP)/uncer
         bias1 = bias[T<=40]
         bias2 = bias[T>40]
-        chiSqr = ((bias1**2).mean() + (bias2**2).mean())/2*N
+        if not np.all(bias1.mask) and not np.all(bias2.mask):
+            chiSqr = ((bias1**2).mean() + (bias2**2).mean())/2*N
+        elif np.all(bias1.mask) and not np.all(bias2.mask):
+            chiSqr = (bias2**2).mean()*N
+        elif not np.all(bias1.mask) and np.all(bias2.mask):
+            chiSqr = (bias1**2).mean()*N
+        else:
+            raise ValueError('All observations are masked???')
 
         misfit = np.sqrt(chiSqr/N)
         chiSqr =  chiSqr if chiSqr < 50 else np.sqrt(chiSqr*50.) 
@@ -511,8 +519,9 @@ class InvPointGenerator():
                 ),mantleInitParmVs=None):
         ptlon -= 360*(ptlon>180)
         pers,vels,sems = self.getDisp(ptlon,ptlat)
+        sems.mask[np.isnan(vels)] = True
+        vels.mask[np.isnan(vels)] = True
         uncers = upscale*sems; uncers[uncers<minUncer] = minUncer
-        
         if (~vels.mask).sum() < 10:
             print(f'Measurements < 10, skip')
             return None,None

@@ -574,16 +574,17 @@ class Model1D_Cascadia_Prism(Model1D_MCinv):
         #     return False
 
         '''
-        Oscillation Limit, the difference between nearby local extrema < 10% of mean vs in mantle
+        Oscillation Limit, the difference between nearby local extrema < 1% of mean vs in mantle
         '''
-        # osciLim = 0.1*vsMantle.mean()
-        # indLocMax = scipy.signal.argrelmax(vsMantle)[0]
-        # indLocMin = scipy.signal.argrelmin(vsMantle)[0]
-        # if len(indLocMax) + len(indLocMin) > 1:
-        #     indLoc = np.sort(np.append(indLocMax,indLocMin))
-        #     osci = abs(np.diff(vsMantle[indLoc]))
-        #     if len(np.where(osci > osciLim)[0]) >= 1:   # origin >= 1
-        #         return False
+        if self.info.get('osciLim',False) is True:
+            osciLim = 0.01*vsMantle.mean()
+            indLocMax = scipy.signal.argrelmax(vsMantle)[0]
+            indLocMin = scipy.signal.argrelmin(vsMantle)[0]
+            if len(indLocMax) + len(indLocMin) > 1:
+                indLoc = np.sort(np.append(indLocMax,indLocMin))
+                osci = abs(np.diff(vsMantle[indLoc]))
+                if len(np.where(osci > osciLim)[0]) >= 1:   # origin >= 1
+                    return False
 
         '''
         velocity increase at bottom

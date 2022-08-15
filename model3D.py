@@ -116,7 +116,7 @@ class Model3D(GeoGrid):
                     self.mods[i][j]._loadMC(paras[i][j])
     def smoothGrid(self,width=50):
         ''' To combine and smooth areas with different model settings '''
-        nGridsDict = {'water':2,'sediment':6,'crust':30,'mantle':200}
+        nGridsDict = {'water':2,'sediment':6,'prism':10,'crust':30,'mantle':200}
         nSeisProp = 6
         def mod2grid(mod:Model1D):
             inProfiles = mod.seisPropGrids()

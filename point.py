@@ -441,24 +441,21 @@ class PostPoint(Point):
 # For cascadia 
 from netCDF4 import Dataset
 from Triforce.utils import GeoMap
-class InvPointGenerator():
+class InvPointGenerator_Cascadia():
     # modelsDir = '/projects/mewu4448/Projects/Cascadia/Models'  # for summit
     modelsDir = '/home/ayu/Projects/Cascadia/Models'           # for marin
     def __init__(self,npzfile) -> None:
-        self.grd = np.load(npzfile,allow_pickle=True)['grd'][()]
-        self.eik = np.load(npzfile,allow_pickle=True)['eikStack'][()]
         import shapefile
         from matplotlib.patches import Polygon
-        self.oceanicPlateBoundary = Polygon([
-            (-131,40.5726),(-127.717, 40.5726),(-127.579, 40.5385),(-127.579, 40.45),(-126.869, 40.4224),(-126.159, 40.3904),\
-            (-125.45, 40.3541),(-124.742, 40.3134), (-124.953, 40.6333), (-124.933, 40.8839), (-125.089, 41.1354), (-125.182, 41.3801), \
-            (-125.309, 41.6522), (-125.281, 41.8176), (-125.313, 41.9856), (-125.331, 42.1419), (-125.29, 42.2845), (-125.209, 42.3588), (-125.198, 42.4917), \
-            (-125.268, 42.5614), (-125.289, 42.8624), (-125.289, 43.0514), (-125.343, 43.1426), (-125.394, 43.2671), (-125.474, 43.426), (-125.48, 43.7375), \
-            (-125.45, 43.9254), (-125.429, 44.0023), (-125.362, 44.0663), (-125.372, 44.3226), (-125.372, 44.5227), (-125.376, 44.6675), (-125.434, 44.7254), \
-            (-125.437, 44.8813), (-125.435, 45.1036), (-125.517, 45.4738), (-125.655, 45.9461), (-125.773, 46.295), (-125.876, 46.6433), (-125.998, 46.9697), \
-            (-126.085, 47.3503), (-126.37, 47.748), (-126.486, 47.9956), (-126.733, 48.291), (-127.018, 48.5646), (-127.378, 48.7502), (-127.608, 48.8768),\
-            (-131,48.8768),(-131,40.5726)
-            ]).get_path()
+        self.grd = np.load(npzfile,allow_pickle=True)['grd'][()]
+        self.eik = np.load(npzfile,allow_pickle=True)['eikStack'][()]
+
+        plates = shapefile.Reader(f'{self.modelsDir}/Plates/PB2002_plates.shp')
+        self.plateNA = Polygon(plates.shapes()[6].points).get_path()
+        self.platePA = Polygon(plates.shapes()[9].points).get_path()
+        self.plateJF = Polygon(plates.shapes()[26].points).get_path()
+        self.prismJF = Polygon(np.loadtxt('Input/prism.csv',delimiter=','))
+
         with Dataset(f'{self.modelsDir}/ETOPO_Cascadia_smoothed.grd') as dset:
             self.topo = GeoMap(dset['lon'][()],dset['lat'][()],dset['z'][()]/1000)
         with Dataset(f'{self.modelsDir}/Crust1.0/crsthk.grd') as dset:
@@ -472,10 +469,7 @@ class InvPointGenerator():
 
         with Dataset(f'{self.modelsDir}/Slab2_Cascadia/cas_slab2_dep_02.24.18.grd') as dset:
             slabDep = GeoMap(dset['x'][()]-360,dset['y'][()],-dset['z'][()])
-        shape_JF = shapefile.Reader(f'{self.modelsDir}/Plates/PB2002_plates.shp').shapes()[26]
-        poly_path_JF = Polygon(shape_JF.points).get_path()
-        shape_PA = shapefile.Reader(f'{self.modelsDir}/Plates/PB2002_plates.shp').shapes()[9]
-        poly_path_PA = Polygon(shape_PA.points).get_path()
+
         lons = np.arange(-132,-120,0.1); lats = np.arange(39,51,0.1)
         prismThk = np.zeros((len(lats),len(lons)))*np.nan
         for i in range(prismThk.shape[0]):
@@ -485,7 +479,7 @@ class InvPointGenerator():
                     prismThk[i,j] = slabDep.value(lon,lat) - max(-self.topo.value(lon,lat),0)-self.sedthk.value(lon,lat)
                 else:
                     prismThk[i,j] = slabDep.value(lon,lat) - max(-self.topo.value(lon,lat),0)-self.sedthkOce.value(lon,lat)
-                if poly_path_JF.contains_point((lon,lat)) or poly_path_PA.contains_point((lon,lat)):
+                if self.plateJF.contains_point((lon,lat)) or self.platePA.contains_point((lon,lat)):
                     prismThk[i,j] = 0
         self.prismthk = GeoMap(lons,lats,prismThk,mask=np.isnan(prismThk))
         
@@ -516,7 +510,7 @@ class InvPointGenerator():
                 'Input/cascadia-ocean.yml',
                 'Input/cascadia-prism.yml',
                 'Input/cascadia-continent.yml'
-                ),mantleInitParmVs=None):
+                )):
         ptlon -= 360*(ptlon>180)
         pers,vels,sems = self.getDisp(ptlon,ptlat)
         sems.mask[np.isnan(vels)] = True
@@ -525,31 +519,31 @@ class InvPointGenerator():
         if (~vels.mask).sum() < 10:
             print(f'Measurements < 10, skip')
             return None,None
-        if self.oceanicPlateBoundary.contains_point((ptlon,ptlat)) and loc in (None,'ocean'):
+        if ((not self.plateNA.contains_point((ptlon,ptlat))) and loc is None) or (loc=='ocean'):
             print(f'Inside ocean plate')
             outDir = 'OceanInv'
             p = PointCascadia(setting[0],{
                 'topo':self.topo.value(ptlon,ptlat),
                 'lithoAge':self.lithoAge.value(ptlon,ptlat),
                 'sedthk':self.sedthkOce.value(ptlon,ptlat),
-                # 'mantleInitParmVs':self.mantleInitParmVs.value(ptlon,ptlat)
+                'mantleInitParmVs':self.mantleInitParmVs.value(ptlon,ptlat)
                 },periods=pers,vels=vels,uncers=uncers)
-        elif self.topo.value(ptlon,ptlat) > 0 and loc in (None,'continent'):
-            print(f'In continent')
-            outDir = 'LandInv'
-            p = PointCascadia(setting[2],{
-                'topo':self.topo.value(ptlon,ptlat),
-                'sedthk':self.sedthk.value(ptlon,ptlat),
-                'crsthk':self.crsthk.value(ptlon,ptlat),
-                'lithoAge':10
-            },periods=pers,vels=vels,uncers=uncers)
-        elif loc in (None,'prism'):
+        elif (self.prismJF.contains_point((ptlon,ptlat)) and loc is None) or (loc=='prism'):
             print('In prism')
             outDir = 'PrismInv'
             p = PointCascadia(setting[1],{
                 'topo':self.topo.value(ptlon,ptlat),
                 'sedthk':self.sedthkOce.value(ptlon,ptlat),
                 'prismthk':self.prismthk.value(ptlon,ptlat),
+                'lithoAge':10
+            },periods=pers,vels=vels,uncers=uncers)
+        elif loc in (None,'continent'):
+            print(f'In continent')
+            outDir = 'LandInv'
+            p = PointCascadia(setting[2],{
+                'topo':self.topo.value(ptlon,ptlat),
+                'sedthk':self.sedthk.value(ptlon,ptlat),
+                'crsthk':self.crsthk.value(ptlon,ptlat),
                 'lithoAge':10
             },periods=pers,vels=vels,uncers=uncers)
         elif loc == 'test':
@@ -564,6 +558,7 @@ class InvPointGenerator():
         else:
             raise ValueError(f'Wrong location specificated {loc}')
 
+        # return None if np.nan found in p.initMod
         from pySurfInv.utils import _dictIterModifier
         def checker(v):
             try:
@@ -583,25 +578,13 @@ class InvPointGenerator():
                 return None,None
             else:
                 raise e
+        
         p.pid = f'{ptlon+360*(ptlon<0):.1f}_{ptlat:.1f}'
         return p,outDir
 
     def genPointLst(self):
         raise ValueError('To be specificated')
-        # pList = []
-        # for lon in self.grd.lons:
-        #     for lat in self.grd.lats:
-        #         if lon < -126.4 and lat <= 46.6:
-        #             continue
-        #         if lat > 46.6 and lon < -126.4-(lat-46.6):
-        #             continue
-        #         p,outDir = self.genPoint(lat,lon,4,0.005,loc='prism')
-        #         if p is None:
-        #             continue
-        #         if p.initMod.info['topo']>0:
-        #             continue
-        #         pList.append((p,outDir))
-        # return pList
+
 
 
 # Testing

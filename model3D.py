@@ -360,22 +360,22 @@ class Model3D(GeoGrid):
     def plotMapView(self,mapTerm,loc='Cascadia',vmin=4.1,vmax=4.4,cmap=None):
         fig,m = self._plotBasemap(loc=loc)
         if mapTerm == 'misfit':
-            cmap = plt.cm.gnuplot_r if cmap is None else cmap
+            cmap = plt.cm.YlOrBr if cmap is None else cmap #plt.cm.gnuplot_r
             norm = mpl.colors.BoundaryNorm(np.linspace(0.5,3,6), cmap.N)
             misfits = np.array(self.misfits)
             misfits[misfits==None] = np.nan
             misfits = np.ma.masked_array(misfits.astype(float),mask=self.mask,fill_value=0)
-            # misfits -= 0.10
-            m.pcolormesh(self.XX-360*(self.XX[0,0]>180),self.YY,misfits,shading='gouraud',cmap=cmap,latlon=True,norm=norm)
+            m.pcolormesh(self.XX-360*(self.XX>180),self.YY,misfits,shading='gouraud',cmap=cmap,latlon=True,
+                        norm=mpl.colors.BoundaryNorm([0,1.0,1.5,2.0,2.5,3.0], cmap.N))
             plt.title(f'Misfit')
-            plt.colorbar(location='bottom',fraction=0.012,aspect=50)
         else:
             if cmap is None:
                 cmap = cvcpt
             vsMap = self.mapview(mapTerm)
             m.pcolormesh(self.XX-360*(self.XX[0,0]>180),self.YY,vsMap,shading='gouraud',cmap=cmap,vmin=vmin,vmax=vmax,latlon=True)
             plt.title(f'Depth: {mapTerm} km')
-            plt.colorbar(location='bottom',fraction=0.012,aspect=50)
+        cax = addCAxes(plt.gca(),location='bottom')
+        plt.colorbar(cax=cax,orientation='horizontal')
         return fig,m
 
     def checkLayerThick(self):

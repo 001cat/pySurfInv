@@ -66,6 +66,7 @@ class Point(object):
                     mod0 = mod1
                     continue
                 misfit1,chiSqr1,L1 = self.misfit(mod1)
+                
                 if accept(chiSqr0,chiSqr1):
                     mod1._dump(i,mcTrack,[misfit1,L1,1])
                     mod0,misfit0,chiSqr0,L0 = mod1,misfit1,chiSqr1,L1
@@ -80,6 +81,8 @@ class Point(object):
                             setting=dict(self.initMod.toYML()),obs=self.obs,pid=pid)
         if verbose == 'mp':
             print(f'Step {pid.split("_")[1]} Time cost:{time.time()-timeStamp:.2f} ')
+        else:
+            return mod1
     def MCinvMP(self,outdir='MCtest',pid=None,runN=50000,step4uwalk=1000,nprocess=12,seed=None,priori=False,isgood=None,
                 verbose=True):
         if priori and outdir.split('_')[-1] != 'priori':
@@ -144,7 +147,7 @@ class PointCascadia(Point):
         L = np.exp(-0.5 * chiSqr)
         return misfit,chiSqr,L
 
-class PostPoint(Point):
+class PostPoint(PointCascadia):
     def __init__(self,npzMC=None,npzPriori=None):
         if npzMC is not None:
             tmp = np.load(npzMC,allow_pickle=True)
@@ -161,6 +164,7 @@ class PostPoint(Point):
             self.Ls      = self.MC[:,1]
             self.accepts = self.MC[:,2]
             self.MCparas = self.MC[:,3:]
+            self.MCparas_pri = None
 
             indMin = np.nanargmin(self.misfits)
             self.minMod         = self.initMod.copy()
@@ -274,6 +278,49 @@ class PostPoint(Point):
         def loadMC(mod,mc):
             mod._loadMC(mc)
             return mod.copy()
+        if zdeps is not None:
+            mod = self.initMod.copy()
+            accMods = [loadMC(mod,mc) for mc in self.MCparas[self.accFinal]]
+            accYs   = np.array([mod.value(zdeps) for mod in tqdm.tqdm(accMods)]).T
+            if self.MCparas_pri is not None:
+                priMods = [loadMC(mod,mc) for mc in self.MCparas_pri[:]]
+                priYs   = np.array([mod.value(zdeps) for mod in tqdm.tqdm(priMods)]).T
+            titles = [f'Hist of Vs at {z} km' for z in zdeps]
+        else:
+            inds = range(len(self.initMod._brownians())) if inds == 'all' else inds
+            accYs = [self.MCparas[self.accFinal,ind] for ind in inds]
+            if self.MCparas_pri is not None:
+                priYs = [self.MCparas_pri[:,ind] for ind in inds]
+            titles = [f'Parameter index {ind}: {self.accFinal.sum()}/{len(self.accFinal)}' for ind in inds]
+
+        for i,title in enumerate(titles):
+            plt.figure()
+            if self.MCparas_pri is not None:
+                _,bin_edges = np.histogram(priYs[i],bins=30)
+                plt.hist(accYs[i],bins=bin_edges,weights=np.ones_like(accYs[i])/float(len(accYs[i])))
+                plt.hist(priYs[i],bins=bin_edges,weights=np.ones_like(priYs[i])/float(len(priYs[i])),
+                            fill=False,ec='k',rwidth=1.0)
+            else:
+                plt.hist(accYs[i],bins=30)
+            plt.title(title)
+            
+        return
+
+        plt.figure()
+        y = self.MCparas_pri[:,ind]
+        _,bin_edges = np.histogram(y,bins=30)
+        y = self.MCparas[self.accFinal,ind]
+        plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)))
+        y = self.MCparas_pri[:,ind]
+        plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)),
+                    fill=False,ec='k',rwidth=1.0)
+        plt.title(f'N = {self.accFinal.sum()}/{len(self.accFinal)}')
+
+        
+        
+        
+        
+        
         if zdeps is not None:
             mod = self.initMod.copy()
             accMods = [loadMC(mod,mc) for mc in self.MCparas[self.accFinal]]

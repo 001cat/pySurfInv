@@ -33,6 +33,28 @@ def plotCascadiaSlab(lon1,lat1,lon2,lat2):
     plt.plot(x,slabU,'w',lw=4)
     plt.plot(xslabD,slabD,'w',lw=4)
 
+def plotCascadiaTrenchCoast(lon1,lat1,lon2,lat2):
+    lon1 = lon1-360*(lon1>180)
+    lon2 = lon2-360*(lon2>180)
+    from shapely.geometry import LineString
+    from geographiclib.geodesic import Geodesic 
+    a = LineString(np.loadtxt('prism.csv',delimiter=','))
+    b = LineString([(-132,45),(-118,45)])
+    p1,p2 = a.intersection(b).geoms
+    if p1.x > p2.x:
+        p1,p2 = p2,p1
+    for p in [p1,p2]:
+        if abs(lon1-lon2)<0.01:
+            x = p.xy[1][0]
+        elif abs(lat1-lat2)<0.01:
+            x = p.xy[0][0]+360
+        else:
+            x = Geodesic.WGS84.Inverse(lat1,lon1,p.xy[1][0],p.xy[0][0])['s12']/1000
+        plt.plot([x,x],[0,200],'--',c='r',lw=0.5)
+    
+
+
+
 def plotMORLocation(lon1,lat1,lon2,lat2):
     lon1 = lon1-360*(lon1>180)
     lon2 = lon2-360*(lon2>180)

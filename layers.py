@@ -169,7 +169,10 @@ class OceanCrust(SeisLayerVs):
     def _nFineLayers(self,**kwargs):
         return min(max(int(round(self.H(**kwargs)/2)),2),10)
     def _calVs(self, z, **kwargs):
-        return np.linspace(self.parm['Vs'][0],self.parm['Vs'][1],len(z))
+        try:
+            return np.linspace(self.parm['Vs'][0],self.parm['Vs'][1],len(z))
+        except:
+            return np.array([self.parm['Vs']] * len(z))
     def _calOthers(self, z, vs, **kwargs):
         vp  = vs*1.8
         rho = 0.541 + 0.3601*vp
@@ -177,26 +180,26 @@ class OceanCrust(SeisLayerVs):
         qp  = np.array( [1400] * len(z) )
         return vp,rho,qs,qp
 
-class OceanCrust_Prism(OceanCrust):
-    def __init__(self,parm,prop={}) -> None:
-        super().__init__(parm,prop)
-        self.prop.update({'LayerName':'OceanCrust_Prism','Group':'crust'})
-    def _nFineLayers(self,**kwargs):
-        H = self.H(**kwargs)
-        if H >= 150:
-            N = 60
-        elif H > 60:
-            N = 30
-        elif H > 20:
-            N = 15
-        elif H > 10:
-            N = 10
-        else:
-            N = 5
-        return N
-    def _calVs(self, z, **kwargs):
-        nBasis = len(self.parm['Vs'])
-        return self._bspl(z,nBasis) * self.parm['Vs']
+# class OceanCrust_Prism(OceanCrust):
+#     def __init__(self,parm,prop={}) -> None:
+#         super().__init__(parm,prop)
+#         self.prop.update({'LayerName':'OceanCrust_Prism','Group':'crust'})
+#     def _nFineLayers(self,**kwargs):
+#         H = self.H(**kwargs)
+#         if H >= 150:
+#             N = 60
+#         elif H > 60:
+#             N = 30
+#         elif H > 20:
+#             N = 15
+#         elif H > 10:
+#             N = 10
+#         else:
+#             N = 5
+#         return N
+#     def _calVs(self, z, **kwargs):
+#         nBasis = len(self.parm['Vs'])
+#         return self._bspl(z,nBasis) * self.parm['Vs']
 
 class OceanMantle(SeisLayerVs):
     def __init__(self,parm,prop={}) -> None:
@@ -274,6 +277,8 @@ class ReferenceMantle(OceanMantle):
     def _nFineLayers(self,**kwargs):
         return 20
     def _calVs(self, z, **kwargs):
+        # vs0 = profileAbove[1][-1] # z,vs,vp,rho,qs,qp,grp,layerName
+        # return np.linspace(vs0,vs0+(z[-1]-z[0])*self.parm['Slope'],len(z))
         return np.linspace(self.parm['Vs'][0],self.parm['Vs'][1],len(z))
 
 
@@ -370,6 +375,9 @@ class OceanMantle_ThermBsplineHybrid(OceanMantle_CascadiaQ):
         return vs
 
 class OceanMantle_ThermBsplineHybridConstQ(OceanMantle_ThermBsplineHybrid):
+    def __init__(self, parm, prop={}) -> None:
+        super().__init__(parm, prop)
+        self.prop.update({'LayerName':'OceanMantle_ThermBsplineHybridConstQ','Group':'mantle'})
     def _calOthers(self, z, vs, topDepth=None, period=1, **kwargs):
         vp,rho,_,_ = super()._calOthers(z, vs, topDepth=topDepth, period=period, **kwargs)
         qs  = np.array( [self.parm.get('Qs',150)]  * len(z) )
@@ -383,6 +391,26 @@ class Prism(LandCrust):
     def _calVs(self, z, **kwargs):
         return np.linspace(self.parm['Vs'][0],self.parm['Vs'][1],len(z))
 
+class OceanicMantlePlate(OceanMantle):
+    def __init__(self,parm,prop={}) -> None:
+        super().__init__(parm,prop)
+        self.prop.update({'LayerName':'OceanicMantlePlate','Group':'mantle'})
+    def _calVs(self, z, **kwargs):
+        return np.array([self.parm['Vs']] * len(z))
+        # return np.linspace(self.parm['Vs'][0],self.parm['Vs'][1],len(z))
+
+class OceanMantle_HighNBspl(OceanMantle):
+    def __init__(self,parm,prop={}) -> None:
+        super().__init__(parm,prop)
+        self.prop.update({'LayerName':'OceanMantle_HighNBspl','Group':'mantle'})
+    def _bspl(self,z,nBasis):
+        deg = nBasis-1 if nBasis > 3 else 3
+        if hasattr(self,'_bspl_') and (nBasis == self._bspl_.nBasis) and \
+           (deg == self._bspl_.deg) and (len(z) == self._bspl_.n):
+           pass
+        else:
+            self._bspl_ = BsplBasis(z,nBasis,deg)
+        return self._bspl_
 
 typeDict = {
         'PureLayer'                         : PureLayer,
@@ -390,7 +418,7 @@ typeDict = {
         'OceanWater'                        : OceanWater,
         'OceanSediment'                     : OceanSediment,
         'OceanCrust'                        : OceanCrust,
-        'OceanCrust_Prism'                  : OceanCrust_Prism,
+        # 'OceanCrust_Prism'                  : OceanCrust_Prism,
         'OceanMantle'                       : OceanMantle,
         'LandSediment'                      : LandSediment,
         'LandCrust'                         : LandCrust,
@@ -401,7 +429,9 @@ typeDict = {
         'OceanMantle_CascadiaQ_compatible'  : OceanMantle_CascadiaQ_20220305SingleLayerClass,
         'OceanMantle_ThermBsplineHybrid'    : OceanMantle_ThermBsplineHybrid,
         'OceanMantle_ThermBsplineHybridConstQ': OceanMantle_ThermBsplineHybridConstQ,
-        'Prism'               : Prism
+        'Prism'                 : Prism,
+        'OceanicMantlePlate'    : OceanicMantlePlate,
+        'OceanMantle_HighNBspl' :OceanMantle_HighNBspl
     }
 oldTypeDict = { # to convert previous layer notes to new layer type id, type_mtype_stype: new type ID
         'water_water_'              : 'OceanWater',

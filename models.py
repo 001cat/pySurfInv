@@ -79,6 +79,30 @@ class Model1D():
         ymlDict['Info'] = self.info
         return deepcopy(ymlDict)
 
+    # def _(self):
+    #     kwargsList = []
+    #     z0 = -max(self.info.get('topo',0),0)
+    #     for layer in self.layers:
+    #         kwargsList.append({'topDepth':z0})
+    #         z0 += layer.H()
+    #     return kwargsList
+        
+    def seisPropGrids_New(self,refLayer=False):
+        layers = self.layers; layers += self._refLayer.copy() if refLayer else []
+
+        z0 = -max(self.info.get('topo',0),0)
+        z,vs,vp,rho,qs,qp,grp,layerName = [],[],[],[],[],[],[],[]
+        for layer in layers:
+            z1,vs1,vp1,rho1,qs1,qp1 = layer.seisPropGrids(
+                profileAbove=[z,vs,vp,rho,qs,qp,grp,layerName],
+                modInfo = self.info)
+            z += list(z1+z0)
+            vs += list(vs1); vp += list(vp1); rho += list(rho1); qs += list(qs1); qp += list(qp1)
+            grp         += [layer.prop['Group']]*len(z1)
+            layerName   += [layer.prop['LayerName']]*len(z1)
+            z0 = z[-1]
+        return np.array(z),np.array(vs),np.array(vp),np.array(rho),np.array(qs),np.array(qp),grp
+
     def seisPropGrids(self,refLayer=False):
         z0 = -max(self.info.get('topo',0),0)
         z,vs,vp,rho,qs,qp,grp = [],[],[],[],[],[],[]
@@ -147,7 +171,7 @@ class Model1D():
 
     @property
     def _refLayer(self):
-        return buildSeisLayer({'H':300,'Vs':[0,0.35/200*300]},'ReferenceMantle')
+        return buildSeisLayer({'H':300,'Slope':0.35/200},'ReferenceMantle')
     @property
     def layers(self):
         return self._layers
@@ -517,9 +541,9 @@ class Model1D_Cascadia_Prism(Model1D_MCinv):
         '''
         Vs jump between group is positive, contraint (5) in 4.2 of Shen et al., 2012
         '''
-        for i in np.where((grp[1:]!=grp[:-1]))[0]:
-            if vs[i+1] < vs[i]:
-                return False
+        # for i in np.where((grp[1:]!=grp[:-1]))[0]:
+        #     if vs[i+1] < vs[i]:
+        #         return False
 
         '''
         All Vs < 4.9km/sec, contraint (6) in 4.2 of Shen et al., 2012
@@ -542,6 +566,13 @@ class Model1D_Cascadia_Prism(Model1D_MCinv):
         '''
         # if vsMantle[1]>vsMantle[0]:
         #     return False
+
+        '''
+        Vs gradient on the top of OceanMantle_HighNBspl is Negative
+        '''
+        ind = [l.prop['LayerName'] for l in self.layers].index('OceanMantle_HighNBspl')
+        if vsMantle[1]>vsMantle[0]:
+            return False
     
         '''
         Vs in crust < 4.3
@@ -576,15 +607,15 @@ class Model1D_Cascadia_Prism(Model1D_MCinv):
         '''
         Oscillation Limit, the difference between nearby local extrema < 1% of mean vs in mantle
         '''
-        if self.info.get('osciLim',False) is True:
-            osciLim = 0.01*vsMantle.mean()
-            indLocMax = scipy.signal.argrelmax(vsMantle)[0]
-            indLocMin = scipy.signal.argrelmin(vsMantle)[0]
-            if len(indLocMax) + len(indLocMin) > 1:
-                indLoc = np.sort(np.append(indLocMax,indLocMin))
-                osci = abs(np.diff(vsMantle[indLoc]))
-                if len(np.where(osci > osciLim)[0]) >= 1:   # origin >= 1
-                    return False
+        # if self.info.get('osciLim',False) is True:
+        #     osciLim = 0.01*vsMantle.mean()
+        #     indLocMax = scipy.signal.argrelmax(vsMantle)[0]
+        #     indLocMin = scipy.signal.argrelmin(vsMantle)[0]
+        #     if len(indLocMax) + len(indLocMin) > 1:
+        #         indLoc = np.sort(np.append(indLocMax,indLocMin))
+        #         osci = abs(np.diff(vsMantle[indLoc]))
+        #         if len(np.where(osci > osciLim)[0]) >= 1:   # origin >= 1
+        #             return False
 
         '''
         velocity increase at bottom
@@ -749,7 +780,8 @@ def buildModel1D(ymlFile,localInfo={},default='Cascadia_Oceanic') -> Model1D:
         try:
             mod = modelTypeDict[modelType]()
             mod.loadYML(rawDict,localInfo)
-        except:
+        except Exception as e:
+            print(e)
             raise ValueError(f'Error: ModelType {modelType} not supported!')
         return mod
 

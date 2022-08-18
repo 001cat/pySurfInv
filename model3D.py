@@ -3,29 +3,34 @@ import numpy as np
 from geographiclib.geodesic import Geodesic
 from pySurfInv.models import buildModel1D,Model1D,Model1D_Puregird
 from pySurfInv.point import PostPoint
-from Triforce.utils import GeoGrid,savetxt
+from Triforce.utils import GeoGrid,savetxt,GeoMap
 from Triforce.obspyPlus import randString
 from Triforce.pltHead import *
 from Triforce.customPlot import cvcpt,rbcpt,addAxes,addCAxes
 
+# def mapSmooth(lons,lats,z,tension=0.0, width=50.):
+#     lons = lons.round(decimals=4)
+#     lats = lats.round(decimals=4)
+#     tmpFname = f'tmp{randString(10)}'
+#     XX,YY = np.meshgrid(lons,lats)
+#     dlon,dlat = lons[1]-lons[0],lats[1]-lats[0]
+#     savetxt(f'{tmpFname}.xyz',XX.flatten(),YY.flatten(),z.flatten())
+#     with open(f'{tmpFname}.bash','w+') as f:
+#         REG     = f'-R{lons[0]:.2f}/{lons[-1]:.2f}/{lats[0]:.2f}/{lats[-1]:.2f}'
+#         f.writelines(f'gmt gmtset MAP_FRAME_TYPE fancy \n')
+#         f.writelines(f'gmt surface {tmpFname}.xyz -T{tension} -G{tmpFname}.grd -I{dlon:.2f}/{dlat:.2f} {REG} \n')
+#         f.writelines(f'gmt grdfilter {tmpFname}.grd -D4 -Fg{width} -G{tmpFname}_Smooth.grd {REG} \n')
+#     os.system(f'bash {tmpFname}.bash')
+#     from netCDF4 import Dataset
+#     with Dataset(f'{tmpFname}_Smooth.grd') as dset:
+#         zSmooth = dset['z'][()]
+#     os.system(f'rm {tmpFname}* gmt.conf gmt.history')
+#     return zSmooth
+
 def mapSmooth(lons,lats,z,tension=0.0, width=50.):
-    lons = lons.round(decimals=4)
-    lats = lats.round(decimals=4)
-    tmpFname = f'tmp{randString(10)}'
-    XX,YY = np.meshgrid(lons,lats)
-    dlon,dlat = lons[1]-lons[0],lats[1]-lats[0]
-    savetxt(f'{tmpFname}.xyz',XX.flatten(),YY.flatten(),z.flatten())
-    with open(f'{tmpFname}.bash','w+') as f:
-        REG     = f'-R{lons[0]:.2f}/{lons[-1]:.2f}/{lats[0]:.2f}/{lats[-1]:.2f}'
-        f.writelines(f'gmt gmtset MAP_FRAME_TYPE fancy \n')
-        f.writelines(f'gmt surface {tmpFname}.xyz -T{tension} -G{tmpFname}.grd -I{dlon:.2f}/{dlat:.2f} {REG} \n')
-        f.writelines(f'gmt grdfilter {tmpFname}.grd -D4 -Fg{width} -G{tmpFname}_Smooth.grd {REG} \n')
-    os.system(f'bash {tmpFname}.bash')
-    from netCDF4 import Dataset
-    with Dataset(f'{tmpFname}_Smooth.grd') as dset:
-        zSmooth = dset['z'][()]
-    os.system(f'rm {tmpFname}* gmt.conf gmt.history')
-    return zSmooth
+    zNew = GeoMap(lons,lats,z).smooth(tension=tension,width=width).z
+    zNew[np.isnan(z)] = np.nan
+    return zNew
 
 class Model3D(GeoGrid):
     ''' to avoid bugs in gmt smooth, start/end of lons/lats should be integer '''
@@ -169,6 +174,9 @@ class Model3D(GeoGrid):
         for i in range(m):
             for j in range(n):
                 if not self.mask[i,j]:
+                    # if np.any(np.isnan(np.sum(matSmooth[i,j,:,:],axis=0))):
+                    #     from IPython import embed; embed()
+                    matSmooth[i,j,0,np.isnan(np.sum(matSmooth[i,j,:,:],axis=0))] = 0
                     grp = self.mods[i][j].seisPropGrids()[-1]
                     grp = np.delete(grp,iLayerDelete,-1)
                     inProfiles = [p for p in matSmooth[i,j,:,:]] + [grp]
@@ -295,8 +303,8 @@ class Model3D(GeoGrid):
         x,y,w,h = bbox.x0,bbox.y0,bbox.width,bbox.height
         ax1 = plt.axes([x,y+h+0.05*h,w,h/6],sharex=ax2)
         ax1.axes.xaxis.set_visible(False)
-        cax1 = addCAxes(ax2,location='bottom',size=0.05,pad=0.06)
-        cax2 = addCAxes(ax2,location='bottom',size=0.05,pad=0.16)
+        cax1 = addCAxes(ax2,location='bottom',size=0.05,pad=0.08)
+        cax2 = addCAxes(ax2,location='bottom',size=0.05,pad=0.20)
 
         topo_plot = topo.copy()
         topo_plot[topo_plot<0] /= 2
@@ -374,8 +382,10 @@ class Model3D(GeoGrid):
             vsMap = self.mapview(mapTerm)
             m.pcolormesh(self.XX-360*(self.XX[0,0]>180),self.YY,vsMap,shading='gouraud',cmap=cmap,vmin=vmin,vmax=vmax,latlon=True)
             plt.title(f'Depth: {mapTerm} km')
+        ax = plt.gca()
         cax = addCAxes(plt.gca(),location='bottom')
         plt.colorbar(cax=cax,orientation='horizontal')
+        plt.sca(ax)
         return fig,m
 
     def checkLayerThick(self):

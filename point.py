@@ -148,7 +148,7 @@ class PointCascadia(Point):
         return misfit,chiSqr,L
 
 class PostPoint(PointCascadia):
-    def __init__(self,npzMC=None,npzPriori=None):
+    def __init__(self,npzMC=None,npzPriori=None,realMCMC=False):
         if npzMC is not None:
             tmp = np.load(npzMC,allow_pickle=True)
             self.MC,setting,self.obs = tmp['mcTrack'],tmp['setting'][()],tmp['obs'][()]
@@ -166,6 +166,13 @@ class PostPoint(PointCascadia):
             self.MCparas = self.MC[:,3:]
             self.MCparas_pri = None
 
+            if realMCMC:
+                for i in range(self.N):
+                    if self.accepts[i]:
+                        iAcc = i
+                    else:
+                        self.MCparas[i,:] = self.MCparas[iAcc,:]
+
             indMin = np.nanargmin(self.misfits)
             self.minMod         = self.initMod.copy()
             self.minMod._loadMC(self.MCparas[indMin])
@@ -179,7 +186,7 @@ class PostPoint(PointCascadia):
             self.avgMod._loadMC(np.mean(self.MCparas[self.accFinal,:],axis=0))
             
             self.avgMod.misfit,_,self.avgMod.L = self.misfit(model=self.avgMod)
-    
+
         if npzPriori is not None:
             tmp = np.load(npzPriori,allow_pickle=True)['mcTrack']
             self.MCparas_pri = tmp[:,3:]
@@ -580,8 +587,8 @@ class InvPointGenerator_Cascadia():
             outDir = 'PrismInv'
             p = PointCascadia(setting[1],{
                 'topo':self.topo.value(ptlon,ptlat),
-                'sedthk':self.sedthkOce.value(ptlon,ptlat),
-                'prismthk':self.prismthk.value(ptlon,ptlat),
+                'sedthk':self.sedthk.value(ptlon,ptlat) if np.isnan(self.sedthkOce.value(ptlon,ptlat)) else self.sedthkOce.value(ptlon,ptlat),
+                'prismthk':200 if np.isnan(self.prismthk.value(ptlon,ptlat)) else self.prismthk.value(ptlon,ptlat),
                 'lithoAge':10
             },periods=pers,vels=vels,uncers=uncers)
         elif loc in (None,'continent'):

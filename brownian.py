@@ -30,6 +30,42 @@ class BrownianVar(float):
     def __str__(self):
         return str(self.v)
 
+class BrownianVarMC(BrownianVar):
+    def __new__(cls,v,ref=None,width=None,type=None,step=None):
+        return super().__new__(cls,v)
+    def __init__(self,v,ref=None,width=None,type=None,step=None) -> None:
+        self._ref = ref
+        self._width = width
+        self._type  = type
+        self._step  = step
+    @property
+    def v(self):
+        return float(self)
+    @property
+    def vmin(self):
+        if self._type == 'abs':
+            return self._ref-self._width
+        elif self._type == 'abs_pos':
+            return max(self._ref-self._width,0)
+        elif self._type == 'rel':
+            return self._ref*(1-self._width/100)
+        elif self._type == 'rel_pos':
+            return max(self._ref*(1-self._width/100),0)
+    @property
+    def vmax(self):
+        if self._type == 'abs':
+            return self._ref+self._width
+        elif self._type == 'abs_pos':
+            return max(self._ref+self._width,0)
+        elif self._type == 'rel':
+            return self._ref*(1+self._width/100)
+        elif self._type == 'rel_pos':
+            return max(self._ref*(1+self._width/100),0)
+    @property
+    def step(self):
+        return abs(self.vmax-self.vmin)/2 if self._step > abs(self.vmax-self.vmin)/2 else self._step
+
+
 if __name__ == '__main__':
     a = BrownianVar(10,0,20,1)
     print(a)

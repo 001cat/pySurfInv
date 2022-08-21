@@ -70,7 +70,7 @@ class Model1D():
 
     def toYML(self):
         def checker(v):
-            return type(v) == BrownianVar
+            return isinstance(v,BrownianVar)
         def modifier(v):
             return [v.v,v.vmin,v.vmax,v.step]
         ymlDict = {}
@@ -79,31 +79,30 @@ class Model1D():
         ymlDict['Info'] = self.info
         return deepcopy(ymlDict)
 
-    # def _(self):
-    #     kwargsList = []
-    #     z0 = -max(self.info.get('topo',0),0)
-    #     for layer in self.layers:
-    #         kwargsList.append({'topDepth':z0})
-    #         z0 += layer.H()
-    #     return kwargsList
-        
-    def seisPropGrids_New(self,refLayer=False):
-        layers = self.layers; layers += self._refLayer.copy() if refLayer else []
-
+    def seisPropGrids(self,refLayer=False,_layerName=False):
+        layers = self.layers.copy(); layers += [self._refLayer.copy()] if refLayer else []
         z0 = -max(self.info.get('topo',0),0)
         z,vs,vp,rho,qs,qp,grp,layerName = [],[],[],[],[],[],[],[]
         for layer in layers:
             z1,vs1,vp1,rho1,qs1,qp1 = layer.seisPropGrids(
-                profileAbove=[z,vs,vp,rho,qs,qp,grp,layerName],
-                modInfo = self.info)
+                layerInfo =[z,vs,vp,rho,qs,qp,grp,layerName],
+                modelInfo = self.info)
+            if z1[-1]-z1[0] < 0.01:
+                continue
             z += list(z1+z0)
             vs += list(vs1); vp += list(vp1); rho += list(rho1); qs += list(qs1); qp += list(qp1)
             grp         += [layer.prop['Group']]*len(z1)
             layerName   += [layer.prop['LayerName']]*len(z1)
             z0 = z[-1]
-        return np.array(z),np.array(vs),np.array(vp),np.array(rho),np.array(qs),np.array(qp),grp
+        if _layerName:
+            return np.array(z),np.array(vs),np.array(vp),np.array(rho),\
+                   np.array(qs),np.array(qp),grp,layerName
+        else:
+            return np.array(z),np.array(vs),np.array(vp),np.array(rho),\
+                   np.array(qs),np.array(qp),grp
 
-    def seisPropGrids(self,refLayer=False):
+
+    def seisPropGrids_deprecated(self,refLayer=False):
         z0 = -max(self.info.get('topo',0),0)
         z,vs,vp,rho,qs,qp,grp = [],[],[],[],[],[],[]
         for layer in self.layers:
@@ -197,7 +196,7 @@ class Model1D_Puregird(Model1D):
         self.info = info
     def loadYML(self, ymlFile, localInfo={}):
         raise AttributeError('"Model1D_Puregird" object has no method "loadYML"')
-    def seisPropGrids(self,refLayer=False):
+    def seisPropGrids_deprecated(self,refLayer=False):
         z,vs,vp,rho,qs,qp,grp = [],[],[],[],[],[],[]
         for layer in self.layers:
             z1,vs1,vp1,rho1,qs1,qp1 = layer.seisPropGrids()
@@ -224,11 +223,11 @@ class Model1D_MCinv(Model1D):
         mc_ind = 0
         for layer in self.layers:
             for k,v in layer.parm.items():
-                if type(v) == BrownianVar:
+                if isinstance(v,BrownianVar):
                     layer.parm[k] = v._setValue(mc[mc_ind]);mc_ind += 1
                 elif type(v) == list:
                     for i in range(len(v)):
-                        if type(v[i]) == BrownianVar:
+                        if isinstance(v[i],BrownianVar):
                             v[i] = v[i]._setValue(mc[mc_ind]);mc_ind += 1
                     layer.parm[k] = v
     def _brownians(self,numberOnly=True):
@@ -237,10 +236,10 @@ class Model1D_MCinv(Model1D):
             for k,v in layer.parm.items():
                 if type(v) is list:
                     for e in v:
-                        if type(e) is BrownianVar:
+                        if isinstance(e,BrownianVar):
                             brownians.append([float(e),layer.prop['Group'],k])
                 else:
-                    if type(v) is BrownianVar:
+                    if isinstance(v,BrownianVar):
                         brownians.append([float(v),layer.prop['Group'],k])
         if numberOnly:
             brownians = [v[0] for v in brownians]
@@ -331,7 +330,7 @@ class Model1D_Cascadia_Oceanic(Model1D_MCinv):
         
         return layersD
 
-    def seisPropGrids(self,refLayer=False):
+    def seisPropGrids_deprecated(self,refLayer=False):
         period = self.info.get('period',1)
         Qage = self.info.get('lithoAge',None) if self.info.get('lithoAgeQ',False) else None
         z0 = -max(self.info.get('topo',0),0)
@@ -531,7 +530,7 @@ class Model1D_Cascadia_Prism(Model1D_MCinv):
         def monoIncrease(a,eps=np.finfo(float).eps):
             return np.all(np.diff(a)>=0)
 
-        z,vs,_,_,_,_,grp = self.seisPropGrids();grp = np.array(grp)
+        z,vs,_,_,_,_,grp,layerName = self.seisPropGrids(_layerName=True);grp = np.array(grp)
         vsMantle    = vs[grp=='mantle']
         vsSediment  = vs[grp=='sediment']
         vsPrism     = vs[grp=='prism']
@@ -541,9 +540,9 @@ class Model1D_Cascadia_Prism(Model1D_MCinv):
         '''
         Vs jump between group is positive, contraint (5) in 4.2 of Shen et al., 2012
         '''
-        # for i in np.where((grp[1:]!=grp[:-1]))[0]:
-        #     if vs[i+1] < vs[i]:
-        #         return False
+        for i in np.where((grp[1:]!=grp[:-1]))[0]:
+            if vs[i+1] < vs[i]:
+                return False
 
         '''
         All Vs < 4.9km/sec, contraint (6) in 4.2 of Shen et al., 2012
@@ -568,54 +567,41 @@ class Model1D_Cascadia_Prism(Model1D_MCinv):
         #     return False
 
         '''
-        Vs gradient on the top of OceanMantle_HighNBspl is Negative
+        mantle plate get higher Vs
         '''
-        ind = [l.prop['LayerName'] for l in self.layers].index('OceanMantle_HighNBspl')
-        if vsMantle[1]>vsMantle[0]:
-            return False
-    
+        if np.any( np.array(layerName) == 'SubductionPlateMantle'):
+            ind = [l.prop['LayerName'] for l in self.layers].index('SubductionPlateMantle')
+            if self.layers[ind].parm['Vs'][0] > self.layers[ind].parm['Vs'][1]:
+                return False
+
+
+        '''
+        No local maximum in last layer
+        '''
+        if self.info.get('mantleLocalMax',True) is False:
+            vsDeeperMantle = vs[np.array(layerName)==layerName[-1]]
+            indLocMax = scipy.signal.argrelmax(vsDeeperMantle)[0]
+            if len(indLocMax) > 0:
+                return False
+
+        '''
+        tmp
+        '''
+        # tmp1,tmp2 = np.array(layerName),vs.copy()
+        # vs_last_layer = tmp2[tmp1==tmp1[-1]]
+        # tmp1,tmp2 = tmp1[tmp1!=tmp1[-1]],tmp2[tmp1!=tmp1[-1]]
+        # vs_second_last_layer = tmp2[tmp1==tmp1[-1]]
+        # if vs_second_last_layer[-1]<vs_last_layer[0]:
+        #     return False
+
+
+
         '''
         Vs in crust < 4.3
         '''
-        # if np.any(vsCrust > 4.3):
-        #     return False
+        if np.any(vsCrust > 4.3):
+            return False
 
-        '''
-        Vs at first fine layer in mantle is between 4.0 and 4.6
-        '''
-        # if vsMantle[0] < 4.0 or vsMantle[0] > 4.6:
-        #     return False
-
-        ''' 
-        Vs at last fine layer in mantle > 4.3 
-        '''
-        # if vsMantle[-1] < 4.3:
-        #     return False
-
-        '''
-        Vs > 4.0 below 80km
-        '''
-        # if np.any(vsMantle < 4.0):
-        #     return False
-
-        '''
-        Change in mantle < 15%, made by Ayu
-        '''
-        # if (vsMantle.max() - vsMantle.min()) > 0.15*vsMantle.mean():
-        #     return False
-
-        '''
-        Oscillation Limit, the difference between nearby local extrema < 1% of mean vs in mantle
-        '''
-        # if self.info.get('osciLim',False) is True:
-        #     osciLim = 0.01*vsMantle.mean()
-        #     indLocMax = scipy.signal.argrelmax(vsMantle)[0]
-        #     indLocMin = scipy.signal.argrelmin(vsMantle)[0]
-        #     if len(indLocMax) + len(indLocMin) > 1:
-        #         indLoc = np.sort(np.append(indLocMax,indLocMin))
-        #         osci = abs(np.diff(vsMantle[indLoc]))
-        #         if len(np.where(osci > osciLim)[0]) >= 1:   # origin >= 1
-        #             return False
 
         '''
         velocity increase at bottom
@@ -659,13 +645,12 @@ class Model1D_Cascadia_Continental(Model1D_MCinv):
                 layersD[layersK[grps.index('crust')]]['H'] = localInfo['crsthk']
         
         return layersD
-
     def isgood(self,verbose=False):
         import scipy.signal
         def monoIncrease(a,eps=np.finfo(float).eps):
             return np.all(np.diff(a)>=0)
 
-        z,vs,_,_,_,_,grp = self.seisPropGrids();grp = np.array(grp)
+        z,vs,_,_,_,_,grp,layerName = self.seisPropGrids(_layerName=True);grp = np.array(grp)
         vsMantle    = vs[grp=='mantle']
         vsSediment  = vs[grp=='sediment']
         vsCrust     = vs[grp=='crust']
@@ -697,7 +682,16 @@ class Model1D_Cascadia_Continental(Model1D_MCinv):
         '''
         # if vsMantle[1]>vsMantle[0]:
         #     return False
-    
+
+        '''
+        No local maximum in last layer
+        '''
+        if self.info.get('mantleLocalMax',True) is False:
+            vsDeeperMantle = vs[np.array(layerName)==layerName[-1]]
+            indLocMax = scipy.signal.argrelmax(vsDeeperMantle)[0]
+            if len(indLocMax) > 0:
+                return False
+
         '''
         Vs in crust < 4.3
         '''
@@ -761,7 +755,6 @@ def buildModel1D(ymlFile,localInfo={},default='Cascadia_Oceanic') -> Model1D:
         'Cascadia_Prism'                    : Model1D_Cascadia_Prism,
         'Cascadia_Continental'              : Model1D_Cascadia_Continental
     }
-
     def loadRawDict(ymlFile):
         if ymlFile is None:
             return None
@@ -772,7 +765,6 @@ def buildModel1D(ymlFile,localInfo={},default='Cascadia_Oceanic') -> Model1D:
             with open(ymlFile, 'r') as f:
                 rawDict = yaml.load(f,Loader=yaml.FullLoader)
         return rawDict
-
     def initModel(rawDict):
         if rawDict is None:
             return None

@@ -55,7 +55,7 @@ class SeisLayer():
         from pySurfInv.utils import _dictIterModifier
         from pySurfInv.brownian import BrownianVar
         def checker(v):
-            return type(v)==BrownianVar
+            return isinstance(v,BrownianVar)
         if reset:
             def modifier(v):
                 return v.reset()
@@ -69,11 +69,12 @@ class SeisLayer():
         return self._perturb(reset=True)
     def copy(self):
         return deepcopy(self)
-    def H(self,**kwargs):
+    def H(self,layerInfo=None,**kwargs):
         if self.parm.get('BottomDepth',None) == None:
             H = self.parm['H']
         else:
-            H = self.parm['BottomDepth'] - kwargs['topDepth']
+            topDepth = layerInfo[0][-1] # z,vs,vp,rho,qs,qp,grp,layerName
+            H = self.parm['BottomDepth'] - topDepth
         return H
 
 class PureLayer(SeisLayer):
@@ -276,10 +277,9 @@ class ReferenceMantle(OceanMantle):
         self.prop.update({'LayerName':'ReferenceMantle','Group':'mantle'})
     def _nFineLayers(self,**kwargs):
         return 20
-    def _calVs(self, z, **kwargs):
-        # vs0 = profileAbove[1][-1] # z,vs,vp,rho,qs,qp,grp,layerName
-        # return np.linspace(vs0,vs0+(z[-1]-z[0])*self.parm['Slope'],len(z))
-        return np.linspace(self.parm['Vs'][0],self.parm['Vs'][1],len(z))
+    def _calVs(self, z, layerInfo=None, modelInfo=None, **kwargs):
+        vs0 = layerInfo[1][-1] # z,vs,vp,rho,qs,qp,grp,layerName
+        return np.linspace(vs0,vs0+(z[-1]-z[0])*self.parm['Slope'],len(z))
 
 
 # Cascadia Specified
@@ -295,7 +295,11 @@ class OceanMantle_CascadiaQ(OceanMantle):
     def __init__(self, parm, prop={}) -> None:
         super().__init__(parm, prop)
         self.prop.update({'LayerName':'OceanMantle_CascadiaQ','Group':'mantle'})
-    def _calOthers(self, z, vs, topDepth=None, period=1, Qage=None, **kwargs):
+    def _calOthers(self, z, layerInfo, modelInfo,**kwargs):
+        Qage = modelInfo.get('lithoAge',None) if modelInfo.get('lithoAgeQ',False) else None
+        topDepth = layerInfo[0][-1]  # z,vs,vp,rho,qs,qp,grp,layerName
+        period = modelInfo.get('period',1)
+
         vp,rho,qs,qp = super()._calOthers(z, vs, **kwargs)
         from pySurfInv.OceanSeis import OceanSeisRuan,HSCM
         Qage = self.parm['ThermAge'] if Qage is None else Qage
@@ -307,7 +311,9 @@ class OceanMantle_CascadiaQ_20220305SingleLayerClass(OceanMantle):
     def __init__(self, parm, prop={}) -> None:
         super().__init__(parm, prop)
         self.prop.update({'LayerName':'OceanMantle_CascadiaQ_20220305SingleLayerClass','Group':'mantle'})
-    def _calOthers(self, z, vs, topDepth=None, **kwargs):
+    def _calOthers(self, z, vs, layerInfo, **kwargs):
+        topDepth = layerInfo[0][-1]  # z,vs,vp,rho,qs,qp,grp,layerName
+
         vp,rho,qs,qp = super()._calOthers(z, vs, **kwargs)
         from pySurfInv.OceanSeis import OceanSeisRuan,HSCM
         seisMod = OceanSeisRuan(HSCM(age=max(1e-3,self.parm['ThermAge']),zdeps=topDepth+z),period=1)
@@ -318,7 +324,14 @@ class OceanMantle_ThermBsplineHybrid(OceanMantle_CascadiaQ):
     def __init__(self, parm, prop={}) -> None:
         super().__init__(parm, prop)
         self.prop.update({'LayerName':'OceanMantle_ThermBsplineHybrid','Group':'mantle'})
-    def _calVs(self, z, topDepth, hCrust, **kwargs):
+    def _calVs(self, z, layerInfo, **kwargs):
+
+        z = layerInfo[0]; h = np.diff(z); grp = np.array(layerInfo[6][:-1]) # z,vs,vp,rho,qs,qp,grp,layerName
+        if np.diff(np.insert(grp=='crust',[0,-1],False)).sum() != 2:# check if there are two seperated layers of crust
+            raise ValueError(f'In {self.__class__}: more than 1 crust layer found!')
+        h,grp = h[h>0.01],grp[h>0.01]
+        hCrust = np.sum(h[grp=='crust'])
+
         nBasis = len(self.parm['Vs']) + 1
         from pySurfInv.OceanSeis import OceanSeisRitz,OceanSeisRuan,HSCM
         Tp = self.parm.get('Tp',1325)
@@ -378,8 +391,8 @@ class OceanMantle_ThermBsplineHybridConstQ(OceanMantle_ThermBsplineHybrid):
     def __init__(self, parm, prop={}) -> None:
         super().__init__(parm, prop)
         self.prop.update({'LayerName':'OceanMantle_ThermBsplineHybridConstQ','Group':'mantle'})
-    def _calOthers(self, z, vs, topDepth=None, period=1, **kwargs):
-        vp,rho,_,_ = super()._calOthers(z, vs, topDepth=topDepth, period=period, **kwargs)
+    def _calOthers(self, z, vs, layerInfo, modelInfo, **kwargs):
+        vp,rho,_,_ = super()._calOthers(z, vs, layerInfo, modelInfo, **kwargs)
         qs  = np.array( [self.parm.get('Qs',150)]  * len(z) )
         qp  = np.array( [1400.] * len(z) )
         return vp,rho,qs,qp
@@ -389,15 +402,41 @@ class Prism(LandCrust):
         super().__init__(parm,prop)
         self.prop.update({'LayerName':'Prism','Group':'prism'})
     def _calVs(self, z, **kwargs):
-        return np.linspace(self.parm['Vs'][0],self.parm['Vs'][1],len(z))
+        if len(self.parm['Vs'])>2:
+            nBasis = len(self.parm['Vs'])
+            return self._bspl(z,nBasis) * self.parm['Vs']
+        else:
+            return np.linspace(self.parm['Vs'][0],self.parm['Vs'][1],len(z))
 
-class OceanicMantlePlate(OceanMantle):
+class SubductionPlateCrust(OceanCrust):
     def __init__(self,parm,prop={}) -> None:
         super().__init__(parm,prop)
-        self.prop.update({'LayerName':'OceanicMantlePlate','Group':'mantle'})
+        self.prop.update({'LayerName':'SubductionPlateCrust','Group':'crust'})
     def _calVs(self, z, **kwargs):
-        return np.array([self.parm['Vs']] * len(z))
-        # return np.linspace(self.parm['Vs'][0],self.parm['Vs'][1],len(z))
+        if isinstance(self.parm['Vs'],list):
+            return np.linspace(self.parm['Vs'][0],self.parm['Vs'][1],len(z))
+        else:
+            return np.array([self.parm['Vs']] * len(z))
+        
+
+class SubductionPlateMantle(OceanMantle):
+    def __init__(self,parm,prop={}) -> None:
+        super().__init__(parm,prop)
+        self.prop.update({'LayerName':'SubductionPlateMantle','Group':'mantle'})
+    def _calVs(self, z, **kwargs):
+        if isinstance(self.parm['Vs'],list):
+            return np.linspace(self.parm['Vs'][0],self.parm['Vs'][1],len(z))
+        else:
+            return np.array([self.parm['Vs']] * len(z))
+
+class SubductionPlateMantle_parabola(OceanMantle):
+    def __init__(self,parm,prop={}) -> None:
+        super().__init__(parm,prop)
+        self.prop.update({'LayerName':'SubductionPlateMantle_parabola','Group':'mantle'})
+    def _calVs(self, z, **kwargs):
+        vs0,vs1 = self.parm['Vs']
+        H = z[-1]-z[0]; A = -(vs1-vs0)*4/(H**2)
+        return A*(z-z[0]-H/2)**2+vs1
 
 class OceanMantle_HighNBspl(OceanMantle):
     def __init__(self,parm,prop={}) -> None:
@@ -430,8 +469,9 @@ typeDict = {
         'OceanMantle_ThermBsplineHybrid'    : OceanMantle_ThermBsplineHybrid,
         'OceanMantle_ThermBsplineHybridConstQ': OceanMantle_ThermBsplineHybridConstQ,
         'Prism'                 : Prism,
-        'OceanicMantlePlate'    : OceanicMantlePlate,
-        'OceanMantle_HighNBspl' :OceanMantle_HighNBspl
+        'SubductionPlateCrust'  : SubductionPlateCrust,
+        'SubductionPlateMantle' : SubductionPlateMantle,
+        'OceanMantle_HighNBspl' : OceanMantle_HighNBspl,
     }
 oldTypeDict = { # to convert previous layer notes to new layer type id, type_mtype_stype: new type ID
         'water_water_'              : 'OceanWater',
@@ -447,7 +487,7 @@ oldTypeDict = { # to convert previous layer notes to new layer type id, type_mty
 
 def buildSeisLayer(parm:dict,typeID,BrownianConvert=True) -> SeisLayer:
     if BrownianConvert:
-        from pySurfInv.brownian import BrownianVar
+        from pySurfInv.brownian import BrownianVar,BrownianVarMC
         from pySurfInv.utils import _dictIterModifier
         def isNumeric(v):
             try:
@@ -457,14 +497,16 @@ def buildSeisLayer(parm:dict,typeID,BrownianConvert=True) -> SeisLayer:
         def toBrownian(v):
             if v[1] in ('fixed','total'):
                 return v[0]
-            elif v[1] == 'abs':
-                return BrownianVar(v[0],v[0]-v[2],v[0]+v[2],v[3])
-            elif v[1] == 'abs_pos':
-                return BrownianVar(v[0],max(v[0]-v[2],0),v[0]+v[2],v[3])
-            elif v[1] == 'rel':
-                return BrownianVar(v[0],v[0]*(1-v[2]/100),v[0]*(1+v[2]/100),v[3])
-            elif v[1] == 'rel_pos':
-                return BrownianVar(v[0],max(v[0]*(1-v[2]/100),0),v[0]*(1+v[2]/100),v[3])
+            elif v[1] in ('abs','abs_pos','rel','rel_pos'):
+                return BrownianVarMC(v[0],ref=v[0],type=v[1],width=v[2],step=v[3])
+            # elif v[1] == 'abs':
+            #     return BrownianVar(v[0],v[0]-v[2],v[0]+v[2],v[3])
+            # elif v[1] == 'abs_pos':
+            #     return BrownianVar(v[0],max(v[0]-v[2],0),v[0]+v[2],v[3])
+            # elif v[1] == 'rel':
+            #     return BrownianVar(v[0],v[0]*(1-v[2]/100),v[0]*(1+v[2]/100),v[3])
+            # elif v[1] == 'rel_pos':
+            #     return BrownianVar(v[0],max(v[0]*(1-v[2]/100),0),v[0]*(1+v[2]/100),v[3])
             elif isNumeric(v[1]):
                 return BrownianVar(v[0],v[1],v[2],v[3])
             else:

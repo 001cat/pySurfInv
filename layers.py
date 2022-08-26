@@ -5,6 +5,14 @@ class BsplBasis(object):
     ''' calculating cubic b-spline basis functions '''
     def __init__(self,z,n,deg=None,alpha=2.,eps=np.finfo(float).eps) -> None:
         self.n,self.nBasis,self.deg,self.alpha,self.eps = len(z),n,deg,alpha,eps
+        if self.nBasis == 1:
+            self.basis = np.ones((1,self.n))
+            return
+        if self.nBasis == 2:
+            self.basis = np.ones((2,self.n))
+            self.basis[0,:] = np.linspace(1,0,self.n)
+            self.basis[1,:] = np.linspace(0,1,self.n)
+            return
         if deg is None:
             deg = 3 + (n>=4)
         x = np.zeros(n+deg)
@@ -29,6 +37,8 @@ class BsplBasis(object):
         bs = bs1[:,:n].copy()
         self.basis = bs.T
     def __mul__(self,coef):
+        if self.nBasis == 1:
+            coef = np.array([coef])
         return np.dot(coef,self.basis)
     def plot(self):
         import matplotlib.pyplot as plt
@@ -130,8 +140,8 @@ class SeisLayerVs(SeisLayer):
         pass
     def _calOthers(self,z,vs,**kwargs):
         pass
-    def _bspl(self,z,nBasis):
-        deg = 3 + (nBasis>=4)
+    def _bspl(self,z,nBasis,deg=None):
+        deg = 3 + (nBasis>=4) if deg is None else deg
         if hasattr(self,'_bspl_') and (nBasis == self._bspl_.nBasis) and \
            (deg == self._bspl_.deg) and (len(z) == self._bspl_.n):
            pass
@@ -221,7 +231,8 @@ class OceanMantle(SeisLayerVs):
         return N
     def _calVs(self, z, **kwargs):
         nBasis = len(self.parm['Vs'])
-        return self._bspl(z,nBasis) * self.parm['Vs']
+        deg    = self.parm.get('deg',None)
+        return self._bspl(z,nBasis,deg) * self.parm['Vs']
     def _calOthers(self, z, vs, **kwargs):
         vp  = vs*1.76
         rho = 3.4268+(vs-4.5)/4.5
@@ -236,7 +247,10 @@ class LandSediment(SeisLayerVs):
     def _nFineLayers(self,**kwargs):
         return 1
     def _calVs(self,z,**kwargs):
-        return np.linspace(self.parm['Vs'][0],self.parm['Vs'][1],len(z))
+        if isinstance(self.parm['Vs'],list):
+            return np.linspace(self.parm['Vs'][0],self.parm['Vs'][1],len(z))
+        else:
+            return np.array([self.parm['Vs']] * len(z))
     def _calOthers(self, z, vs, **kwargs):
         vp  = vs*2.0
         rho = 1.22679 + 1.53201*vs - 0.83668*vs*vs + 0.20673*vs**3 - 0.01656*vs**4
@@ -263,7 +277,14 @@ class LandCrust(SeisLayerVs):
         return N
     def _calVs(self, z, **kwargs):
         nBasis = len(self.parm['Vs'])
-        return self._bspl(z,nBasis) * self.parm['Vs']
+        if self.parm.get('Gauss',False) is False:
+            return self._bspl(z,nBasis) * self.parm['Vs']
+        else:
+            from Triforce.mathPlus import gaussFun
+            nBasis = len(self.parm['Vs'])
+            vs0 = self._bspl(z,nBasis) * self.parm['Vs']
+            vs1 = gaussFun(self.parm['Gauss'][0],self.parm['Gauss'][1],self.parm['Gauss'][2],z)
+            return vs0+vs1
     def _calOthers(self, z, vs, **kwargs):
         vp  = vs*1.80
         rho = 1.22679 + 1.53201*vs - 0.83668*vs*vs + 0.20673*vs**3 - 0.01656*vs**4
@@ -417,6 +438,17 @@ class SubductionPlateCrust(OceanCrust):
             return np.linspace(self.parm['Vs'][0],self.parm['Vs'][1],len(z))
         else:
             return np.array([self.parm['Vs']] * len(z))
+
+class SubductionPlateCrust_LowVs(SubductionPlateCrust):
+    def __init__(self,parm,prop={}) -> None:
+        super().__init__(parm,prop)
+        self.prop.update({'LayerName':'SubductionPlateCrust_LowVs','Group':'crust'})
+    def _calOthers(self, z, vs, **kwargs):
+        vp  = vs*2.45
+        rho = 0.541 + 0.3601*vp
+        qs  = np.array( [350]  * len(z) )
+        qp  = np.array( [1400] * len(z) )
+        return vp,rho,qs,qp
         
 
 class SubductionPlateMantle(OceanMantle):
@@ -451,6 +483,20 @@ class OceanMantle_HighNBspl(OceanMantle):
             self._bspl_ = BsplBasis(z,nBasis,deg)
         return self._bspl_
 
+
+class OceanMantle_Gaussian(OceanMantle):
+    def __init__(self,parm,prop={}) -> None:
+        super().__init__(parm,prop)
+        self.prop.update({'LayerName':'OceanMantle_Gaussian','Group':'mantle'})
+    def _calVs(self, z, **kwargs):
+        from Triforce.mathPlus import gaussFun
+        nBasis = len(self.parm['Vs'])
+        vs0 = self._bspl(z,nBasis) * self.parm['Vs']
+        vs1 = gaussFun(self.parm['Gauss'][0],self.parm['Gauss'][1],self.parm['Gauss'][2],z)
+        return vs0+vs1
+
+
+
 typeDict = {
         'PureLayer'                         : PureLayer,
         'PureGrid'                          : PureGrid,
@@ -468,10 +514,13 @@ typeDict = {
         'OceanMantle_CascadiaQ_compatible'  : OceanMantle_CascadiaQ_20220305SingleLayerClass,
         'OceanMantle_ThermBsplineHybrid'    : OceanMantle_ThermBsplineHybrid,
         'OceanMantle_ThermBsplineHybridConstQ': OceanMantle_ThermBsplineHybridConstQ,
+        
         'Prism'                 : Prism,
         'SubductionPlateCrust'  : SubductionPlateCrust,
         'SubductionPlateMantle' : SubductionPlateMantle,
         'OceanMantle_HighNBspl' : OceanMantle_HighNBspl,
+        'SubductionPlateCrust_LowVs' :SubductionPlateCrust_LowVs,
+        'OceanMantle_Gaussian'  : OceanMantle_Gaussian,
     }
 oldTypeDict = { # to convert previous layer notes to new layer type id, type_mtype_stype: new type ID
         'water_water_'              : 'OceanWater',

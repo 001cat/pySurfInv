@@ -6,7 +6,7 @@ from pySurfInv.layers import buildSeisLayer
 from pySurfInv.utils import plotLayer,plotGrid,_dictIterModifier
 from pySurfInv.brownian import BrownianVar
 
-def _calForward(inProfile,wavetype='Ray',periods=[5,10,20,40,60,80]):
+def _calForward(inProfile,wavetype='Ray',periods=[5,10,20,40,60,80],debug=False):
     import pySurfInv.fast_surf as fast_surf
     if wavetype == 'Ray':
         ilvry = 2
@@ -25,6 +25,8 @@ def _calForward(inProfile,wavetype='Ray',periods=[5,10,20,40,60,80]):
     (ur0,ul0,cr0,cl0)       = fast_surf.fast_surf(nlay, ilvry, Vp, Vs, rho, h, qsinv, per, nper)
     
     if np.any(cr0[:nper]<0.01):
+        if debug:
+            print(cr0[:nper])
         return None
     return cr0[:nper]
 
@@ -168,6 +170,12 @@ class Model1D():
             print('To be added...')
         return ax
 
+    def _getLayer(self,layerName): # using _layers instead of layers, for parameter modification only
+        try:
+            ind = [l.prop['LayerName'] for l in self._layers].index(layerName)
+            return self._layers[ind]
+        except:
+            return None
     @property
     def _refLayer(self):
         return buildSeisLayer({'H':300,'Slope':0.35/200},'ReferenceMantle')
@@ -540,9 +548,10 @@ class Model1D_Cascadia_Prism(Model1D_MCinv):
         '''
         Vs jump between group is positive, contraint (5) in 4.2 of Shen et al., 2012
         '''
-        for i in np.where((grp[1:]!=grp[:-1]))[0]:
-            if vs[i+1] < vs[i]:
-                return False
+        if self.info.get('allowNegativeJump',False) is False:
+            for i in np.where((grp[1:]!=grp[:-1]))[0]:
+                if vs[i+1] < vs[i]:
+                    return False
 
         '''
         All Vs < 4.9km/sec, contraint (6) in 4.2 of Shen et al., 2012
@@ -563,22 +572,34 @@ class Model1D_Cascadia_Prism(Model1D_MCinv):
         '''
         Negative velocity gradient below moho
         '''
-        # if vsMantle[1]>vsMantle[0]:
-        #     return False
+        if self.info.get('negSlopeMoho',False) is True:
+            if vsMantle[1]>vsMantle[0]:
+                return False
 
         '''
         mantle plate get higher Vs
         '''
         if np.any( np.array(layerName) == 'SubductionPlateMantle'):
             ind = [l.prop['LayerName'] for l in self.layers].index('SubductionPlateMantle')
-            if self.layers[ind].parm['Vs'][0] > self.layers[ind].parm['Vs'][1]:
+            if isinstance(self.layers[ind].parm['Vs'],list):
+                if self.layers[ind].parm['Vs'][0] > self.layers[ind].parm['Vs'][1]:
+                    return False
+
+        '''
+        mantle Vs 100km
+        '''
+        vsLessThan = self.info.get('mantleVs100LessThan',False)
+        if vsLessThan is not False:
+            if vs[(z<150) * (z>50)].mean() >= vsLessThan:
                 return False
+
+
 
 
         '''
         No local maximum in last layer
         '''
-        if self.info.get('mantleLocalMax',True) is False:
+        if self.info.get('allowMantleLocalMax',True) is False or self.info.get('mantleLocalMax',True) is False:
             vsDeeperMantle = vs[np.array(layerName)==layerName[-1]]
             indLocMax = scipy.signal.argrelmax(vsDeeperMantle)[0]
             if len(indLocMax) > 0:
@@ -773,8 +794,8 @@ def buildModel1D(ymlFile,localInfo={},default='Cascadia_Oceanic') -> Model1D:
             mod = modelTypeDict[modelType]()
             mod.loadYML(rawDict,localInfo)
         except Exception as e:
-            print(e)
-            raise ValueError(f'Error: ModelType {modelType} not supported!')
+            raise e
+            # raise ValueError(f'Error: ModelType {modelType} not supported!')
         return mod
 
     return initModel(loadRawDict(ymlFile))

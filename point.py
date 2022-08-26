@@ -576,7 +576,7 @@ class InvPointGenerator_Cascadia():
         if ((not self.plateNA.contains_point((ptlon,ptlat))) and loc is None) or (loc=='ocean'):
             print(f'Inside ocean plate')
             outDir = 'OceanInv'
-            p = PointCascadia(setting[0],{
+            p = Point(setting[0],{
                 'topo':self.topo.value(ptlon,ptlat),
                 'lithoAge':self.lithoAge.value(ptlon,ptlat),
                 'sedthk':self.sedthkOce.value(ptlon,ptlat),
@@ -585,7 +585,7 @@ class InvPointGenerator_Cascadia():
         elif (self.prismJF.contains_point((ptlon,ptlat)) and loc is None) or (loc=='prism'):
             print('In prism')
             outDir = 'PrismInv'
-            p = PointCascadia(setting[1],{
+            p = Point(setting[1],{
                 'topo':self.topo.value(ptlon,ptlat),
                 'sedthk':self.sedthk.value(ptlon,ptlat) if np.isnan(self.sedthkOce.value(ptlon,ptlat)) else self.sedthkOce.value(ptlon,ptlat),
                 'prismthk':200 if np.isnan(self.prismthk.value(ptlon,ptlat)) else self.prismthk.value(ptlon,ptlat),
@@ -594,7 +594,7 @@ class InvPointGenerator_Cascadia():
         elif loc in (None,'continent'):
             print(f'In continent')
             outDir = 'LandInv'
-            p = PointCascadia(setting[2],{
+            p = Point(setting[2],{
                 'topo':self.topo.value(ptlon,ptlat),
                 'sedthk':self.sedthk.value(ptlon,ptlat),
                 'crsthk':self.crsthk.value(ptlon,ptlat),
@@ -603,10 +603,10 @@ class InvPointGenerator_Cascadia():
         elif loc == 'test':
             outDir = 'test'
             setting = 'Input/cascadia-prism-test.yml'
-            p = PointCascadia(setting,{
+            p = Point(setting,{
                 'topo':self.topo.value(ptlon,ptlat),
-                'sedthk':self.sedthkOce.value(ptlon,ptlat),
-                'prismthk':self.prismthk.value(ptlon,ptlat),
+                'sedthk':self.sedthk.value(ptlon,ptlat) if np.isnan(self.sedthkOce.value(ptlon,ptlat)) else self.sedthkOce.value(ptlon,ptlat),
+                'prismthk':200 if np.isnan(self.prismthk.value(ptlon,ptlat)) else self.prismthk.value(ptlon,ptlat),
                 'lithoAge':10
             },periods=pers,vels=vels,uncers=uncers)
         else:
@@ -616,9 +616,9 @@ class InvPointGenerator_Cascadia():
         from pySurfInv.utils import _dictIterModifier
         def checker(v):
             try:
-                isnan = bool(np.isnan(v))
+                len(v);isnan=False
             except:
-                isnan = False
+                isnan = bool(np.isnan(v))
             if isnan:
                 raise ValueError('nan value found')
             else:

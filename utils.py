@@ -39,7 +39,7 @@ def plotCascadiaTrenchCoast(lon1,lat1,lon2,lat2):
     from shapely.geometry import LineString
     from geographiclib.geodesic import Geodesic 
     a = LineString(np.loadtxt('prism.csv',delimiter=','))
-    b = LineString([(-132,45),(-118,45)])
+    b = LineString([(lon1,lat1),(lon2,lat2)])
     p1,p2 = a.intersection(b).geoms
     if p1.x > p2.x:
         p1,p2 = p2,p1
@@ -52,7 +52,8 @@ def plotCascadiaTrenchCoast(lon1,lat1,lon2,lat2):
             x = Geodesic.WGS84.Inverse(lat1,lon1,p.xy[1][0],p.xy[0][0])['s12']/1000
         plt.plot([x,x],[0,200],'--',c='r',lw=0.5)
     
-
+def plotVolcanos(lon1,lat1,lon2,lat2):
+    pass
 
 
 def plotMORLocation(lon1,lat1,lon2,lat2):

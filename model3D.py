@@ -255,12 +255,12 @@ class Model3D(GeoGrid):
             moho[i]= self.moho(tmp['lat2'],tmp['lon2'])
             topo[i]= self.topo(tmp['lat2'],tmp['lon2'])
         z = np.ma.masked_array(z,np.isnan(z))
-        if xtype == 'km':
-            pass
-        elif xtype == 'lat' or (xtype == 'auto' and abs(lon1-lon2)<0.01):
+        if xtype == 'lat' or (xtype == 'auto' and abs(lon1-lon2)<0.01):
             x = np.linspace(lat1,lat2,301)
         elif xtype == 'lon' or (xtype == 'auto' and abs(lat1-lat2)<0.01):
             x = np.linspace(lon1,lon2,301)
+        elif xtype in ('km','auto'):
+            pass
         else:
             raise ValueError(f'Wrong xtype: {xtype}')
         XX,YY = np.meshgrid(x,y)

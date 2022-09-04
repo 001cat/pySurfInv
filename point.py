@@ -20,6 +20,8 @@ class Point(object):
         if cP is None:
             return 88888,88888,0
         cO = self.obs['c']
+        if not np.ma.isMaskedArray(cO):
+            cO = np.ma.masked_array(cO)
         uncer = self.obs['uncer']
         N = cO.count()
         chiSqr = (((cO - cP)/uncer)**2).sum()
@@ -126,6 +128,8 @@ class PointCascadia(Point):
         if cP is None:
             return 88888,88888,0
         cO = self.obs['c']
+        if not np.ma.isMaskedArray(cO):
+            cO = np.ma.masked_array(cO)
         uncer = self.obs['uncer']
 
         N = cO.count()

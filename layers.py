@@ -495,7 +495,17 @@ class OceanMantle_Gaussian(OceanMantle):
         vs1 = gaussFun(self.parm['Gauss'][0],self.parm['Gauss'][1],self.parm['Gauss'][2],z)
         return vs0+vs1
 
-
+class OceanMantle_BoxCar(OceanMantle):
+    def __init__(self,parm,prop={}) -> None:
+        super().__init__(parm,prop)
+        self.prop.update({'LayerName':'OceanMantle_BoxCar','Group':'mantle'})
+    def _calVs(self, z, **kwargs):
+        from Triforce.mathPlus import gaussFun
+        nBasis = len(self.parm['Vs'])
+        vs0 = self._bspl(z,nBasis) * self.parm['Vs']
+        vs1 = np.zeros(vs0.shape)
+        vs1[(z>=self.parm['BoxCar'][0]) * (z<=self.parm['BoxCar'][1])] = self.parm['BoxCar'][2]
+        return vs0+vs1
 
 typeDict = {
         'PureLayer'                         : PureLayer,
@@ -521,6 +531,7 @@ typeDict = {
         'OceanMantle_HighNBspl' : OceanMantle_HighNBspl,
         'SubductionPlateCrust_LowVs' :SubductionPlateCrust_LowVs,
         'OceanMantle_Gaussian'  : OceanMantle_Gaussian,
+        'OceanMantle_BoxCar'    : OceanMantle_BoxCar,
     }
 oldTypeDict = { # to convert previous layer notes to new layer type id, type_mtype_stype: new type ID
         'water_water_'              : 'OceanWater',

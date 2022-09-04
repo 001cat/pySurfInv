@@ -707,11 +707,11 @@ class Model1D_Cascadia_Continental(Model1D_MCinv):
         '''
         No local maximum in last layer
         '''
-        if self.info.get('mantleLocalMax',True) is False:
-            vsDeeperMantle = vs[np.array(layerName)==layerName[-1]]
-            indLocMax = scipy.signal.argrelmax(vsDeeperMantle)[0]
-            if len(indLocMax) > 0:
-                return False
+        # if self.info.get('mantleLocalMax',True) is False:
+        #     vsDeeperMantle = vs[np.array(layerName)==layerName[-1]]
+        #     indLocMax = scipy.signal.argrelmax(vsDeeperMantle)[0]
+        #     if len(indLocMax) > 0:
+        #         return False
 
         '''
         Vs in crust < 4.3
@@ -758,8 +758,8 @@ class Model1D_Cascadia_Continental(Model1D_MCinv):
         '''
         velocity increase at bottom
         '''
-        if (vsMantle[-1]-vsMantle[-2])/(zMantle[-1]-zMantle[-2]) <= 0:
-            return False
+        # if (vsMantle[-1]-vsMantle[-2])/(zMantle[-1]-zMantle[-2]) <= 0:
+        #     return False
 
         # temporary only
         # if len(indLocMin) > 1:

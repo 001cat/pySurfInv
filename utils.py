@@ -55,7 +55,6 @@ def plotCascadiaTrenchCoast(lon1,lat1,lon2,lat2):
 def plotVolcanos(lon1,lat1,lon2,lat2):
     pass
 
-
 def plotMORLocation(lon1,lat1,lon2,lat2):
     lon1 = lon1-360*(lon1>180)
     lon2 = lon2-360*(lon2>180)

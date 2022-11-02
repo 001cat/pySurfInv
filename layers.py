@@ -303,7 +303,7 @@ class ReferenceMantle(OceanMantle):
         return np.linspace(vs0,vs0+(z[-1]-z[0])*self.parm['Slope'],len(z))
 
 
-# Cascadia Specified
+# Cascadia(Oceanic) Specified
 class OceanSediment_Cascadia(OceanSediment):
     def __init__(self, parm, prop={}) -> None:
         super().__init__(parm, prop)
@@ -418,6 +418,8 @@ class OceanMantle_ThermBsplineHybridConstQ(OceanMantle_ThermBsplineHybrid):
         qp  = np.array( [1400.] * len(z) )
         return vp,rho,qs,qp
 
+
+# Cascadia Specified
 class Prism(LandCrust):
     def __init__(self,parm,prop={}) -> None:
         super().__init__(parm,prop)
@@ -499,12 +501,60 @@ class OceanMantle_BoxCar(OceanMantle):
     def __init__(self,parm,prop={}) -> None:
         super().__init__(parm,prop)
         self.prop.update({'LayerName':'OceanMantle_BoxCar','Group':'mantle'})
+    @staticmethod
+    def _subdivideInt_positive(N,segLs):
+        if len(segLs) > N:
+            raise ValueError()
+        segLs = np.asarray(segLs)
+        def _subdivideInt(N,segLs,noResidual=True):
+            if len(segLs) > N:
+                raise ValueError()
+            segLs = np.asarray(segLs)
+            totalL = sum(segLs)
+            Ns  = np.zeros(len(segLs),dtype=int)
+            res = np.zeros(len(segLs))
+            for i in range(len(segLs)):
+                tmp = segLs[i]/totalL*N
+                Ns[i]  = int(max(1,np.floor(tmp)))
+                res[i] = tmp - Ns[i]
+            if noResidual:
+                for i in np.argsort(res)[::-1][:N-sum(Ns)]:
+                    Ns[i]+=1
+            return Ns
+        Ns = _subdivideInt(N,segLs,noResidual=False)
+        Ns[Ns==0] = 1
+        if sum(Ns) <= N:
+            res = segLs/sum(segLs)*N-Ns
+            for i in np.argsort(res)[::-1][:N-sum(Ns)]:
+                Ns[i]+=1
+        else:
+            Ns[Ns>1] -= _subdivideInt(sum(Ns)-N,segLs[Ns>1],noResidual=True)
+        return Ns
+    def _nFineLayers(self, **kwargs):
+            N = super()._nFineLayers(**kwargs)
+            return self._subdivideInt_positive(N,[
+                self.parm['BoxCar'][0], 
+                self.parm['BoxCar'][1]-self.parm['BoxCar'][0],
+                self.H(**kwargs) - self.parm['BoxCar'][1]
+                ])
+    def seisPropGrids(self,**kwargs):
+        N1,N2,N3   = self._nFineLayers(**kwargs)
+        # from IPython import embed; embed()
+        z = np.concatenate((
+            np.linspace(0,self.parm['BoxCar'][0],N1+1),
+            np.linspace(self.parm['BoxCar'][0],self.parm['BoxCar'][1],N2+1),
+            np.linspace(self.parm['BoxCar'][1],self.H(**kwargs),N3+1)
+        ))
+        # z   = np.linspace(0, self.H(**kwargs), N+1)
+        vs = self._calVs(z,**kwargs)
+        vp,rho,qs,qp = self._calOthers(z,vs,**kwargs)
+        return z,vs,vp,rho,qs,qp
     def _calVs(self, z, **kwargs):
-        from Triforce.mathPlus import gaussFun
         nBasis = len(self.parm['Vs'])
         vs0 = self._bspl(z,nBasis) * self.parm['Vs']
+        N1,N2,N3   = self._nFineLayers(**kwargs)
         vs1 = np.zeros(vs0.shape)
-        vs1[(z>=self.parm['BoxCar'][0]) * (z<=self.parm['BoxCar'][1])] = self.parm['BoxCar'][2]
+        vs1[N1+1:N1+N2+2] = self.parm['BoxCar'][2]
         return vs0+vs1
 
 typeDict = {

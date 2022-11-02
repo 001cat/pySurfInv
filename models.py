@@ -1,4 +1,5 @@
 import glob
+from tkinter import E
 import numpy as np
 from copy import deepcopy
 from Triforce.pltHead import *
@@ -761,10 +762,51 @@ class Model1D_Cascadia_Continental(Model1D_MCinv):
         # if (vsMantle[-1]-vsMantle[-2])/(zMantle[-1]-zMantle[-2]) <= 0:
         #     return False
 
-        # temporary only
-        # if len(indLocMin) > 1:
-        #     return False
+        '''
+        criterion for OceanMantle_Gaussian layer
+        1. velocity above slab can not be larger than slab
+        2. without gaussian part, the oscillation should be small
+        '''
+        from pySurfInv.layers import OceanMantle_Gaussian
+        if isinstance(self.layers[-1],OceanMantle_Gaussian):
+            A,mu,sig = self.layers[-1].parm['Gauss']
+            ztmp = zMantle-zMantle[0]
+            indAbove = ztmp < mu - 2*sig
+            indIn    = abs(ztmp-mu) <= 2*sig
+            indBelow = ztmp > mu + 2*sig
+            try:
+                if np.any(vsMantle[indAbove] > max(vsMantle[indIn])):
+                    return False
+            except Exception as e:
+                # print(e)
+                pass
 
+            # if np.mean(vsMantle[indBelow]) < np.mean(vsMantle[indAbove]):
+            #     return False
+
+            from Triforce.mathPlus import gaussFun
+            vstmp = vsMantle - gaussFun(A,mu,sig,ztmp)
+            osciLim = 0.03*vstmp.mean()
+            # osciLim = sig
+            indLocMax = scipy.signal.argrelmax(vstmp)[0]
+            indLocMin = scipy.signal.argrelmin(vstmp)[0]
+            if len(indLocMax) + len(indLocMin) > 1:
+                indLoc = np.sort(np.append(indLocMax,indLocMin))
+                osci = abs(np.diff(vstmp[indLoc]))
+                if len(np.where(osci > osciLim)[0]) >= 1:   # origin >= 1
+                    return False
+
+            # from Triforce.mathPlus import gaussFun
+            # vsMantle - gaussFun(A,mu,sig,z)
+            # cwtWidth = 30//(z[1]-z[0])
+            # cwt = scipy.signal.cwt(vsMantle - np.interp(z,[z[0],z[-1]],[vsMantle[0],vsMantle[-1]]),
+            #                     scipy.signal.ricker,[cwtWidth])[0]
+            # indLocMax = scipy.signal.argrelmax(cwt)[0]
+            # indLocMin = scipy.signal.argrelmin(cwt)[0]
+            # indLoc = np.sort(np.append(indLocMax,indLocMin))
+            # osci = abs(np.diff(cwt[indLoc]))
+            # if np.any(osci > 0.3):
+            #     return False
         return True
 
 

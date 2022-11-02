@@ -64,10 +64,16 @@ class BrownianVarMC(BrownianVar):
     @property
     def step(self):
         return abs(self.vmax-self.vmin)/2 if self._step > abs(self.vmax-self.vmin)/2 else self._step
-
+    def _setValue(self,v):
+        return BrownianVarMC(v,self._ref,self._width,self._type,self._step)
 
 if __name__ == '__main__':
-    a = BrownianVar(10,0,20,1)
-    print(a)
-    b = a._setValue(11)
-    print(b)
+    # a = BrownianVar(10,0,20,1)
+    # print(a)
+    # b = a._setValue(11)
+    # print(b)
+
+    a = BrownianVarMC(10,10,30,'rel',1)
+    a._ref = 15
+    b = a._setValue(15)
+

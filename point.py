@@ -525,8 +525,12 @@ class InvPointGenerator_Cascadia():
         with Dataset(f'{self.modelsDir}/age_JdF_model_0.01.grd') as dset:
             self.lithoAge = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()])
 
+        # slab_Hayes: Hayes, G., 2018, Slab2 - A Comprehensive Subduction Zone Geometry Model: 
+        # U.S. Geological Survey data release, https://doi.org/10.5066/F7PV6JNV.
         with Dataset(f'{self.modelsDir}/Slab2_Cascadia/cas_slab2_dep_02.24.18.grd') as dset:
-            slabDep = GeoMap(dset['x'][()]-360,dset['y'][()],-dset['z'][()])
+            self.slabDep = GeoMap(dset['x'][()]-360,dset['y'][()],-dset['z'][()])
+        with Dataset('/home/ayu/Projects/Cascadia/Models/Slab2_Cascadia/cas_slab2_dip_02.24.18.grd') as dset:
+            self.slabDip = GeoMap(dset['x'][()]-360,dset['y'][()],dset['z'][()])
 
         lons = np.arange(-132,-120,0.1); lats = np.arange(39,51,0.1)
         prismThk = np.zeros((len(lats),len(lons)))*np.nan
@@ -534,9 +538,9 @@ class InvPointGenerator_Cascadia():
             for j in range(prismThk.shape[1]):
                 lon,lat = lons[j],lats[i]
                 if np.isnan(self.sedthkOce.value(lon,lat)):
-                    prismThk[i,j] = slabDep.value(lon,lat) - max(-self.topo.value(lon,lat),0)-self.sedthk.value(lon,lat)
+                    prismThk[i,j] = self.slabDep.value(lon,lat) - max(-self.topo.value(lon,lat),0)-self.sedthk.value(lon,lat)
                 else:
-                    prismThk[i,j] = slabDep.value(lon,lat) - max(-self.topo.value(lon,lat),0)-self.sedthkOce.value(lon,lat)
+                    prismThk[i,j] = self.slabDep.value(lon,lat) - max(-self.topo.value(lon,lat),0)-self.sedthkOce.value(lon,lat)
                 if self.plateJF.contains_point((lon,lat)) or self.platePA.contains_point((lon,lat)):
                     prismThk[i,j] = 0
         self.prismthk = GeoMap(lons,lats,prismThk,mask=np.isnan(prismThk))

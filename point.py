@@ -529,7 +529,7 @@ class InvPointGenerator_Cascadia():
         # U.S. Geological Survey data release, https://doi.org/10.5066/F7PV6JNV.
         with Dataset(f'{self.modelsDir}/Slab2_Cascadia/cas_slab2_dep_02.24.18.grd') as dset:
             self.slabDep = GeoMap(dset['x'][()]-360,dset['y'][()],-dset['z'][()])
-        with Dataset('/home/ayu/Projects/Cascadia/Models/Slab2_Cascadia/cas_slab2_dip_02.24.18.grd') as dset:
+        with Dataset(f'{self.modelsDir}/Slab2_Cascadia/cas_slab2_dip_02.24.18.grd') as dset:
             self.slabDip = GeoMap(dset['x'][()]-360,dset['y'][()],dset['z'][()])
 
         lons = np.arange(-132,-120,0.1); lats = np.arange(39,51,0.1)

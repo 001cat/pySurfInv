@@ -485,6 +485,19 @@ class OceanMantle_HighNBspl(OceanMantle):
             self._bspl_ = BsplBasis(z,nBasis,deg)
         return self._bspl_
 
+class OceanMantle_SerpentineTop(OceanMantle):
+    def __init__(self,parm,prop={}) -> None:
+        super().__init__(parm,prop)
+        self.prop.update({'LayerName':'OceanMantle_SerpentineTop','Group':'mantle'})
+    def _calOthers(self, z, vs, **kwargs):
+        # vp  = vs*1.76
+        vp = np.clip(vs,4.4,None)*1.76
+        rho = 3.4268+(vs-4.5)/4.5
+        qs  = np.array( [150.]  * len(z) )
+        qp  = np.array( [1400.] * len(z) )
+        return vp,rho,qs,qp
+
+
 
 class OceanMantle_Gaussian(OceanMantle):
     def __init__(self,parm,prop={}) -> None:
@@ -580,6 +593,7 @@ typeDict = {
         'SubductionPlateMantle' : SubductionPlateMantle,
         'OceanMantle_HighNBspl' : OceanMantle_HighNBspl,
         'SubductionPlateCrust_LowVs' :SubductionPlateCrust_LowVs,
+        'OceanMantle_SerpentineTop' :OceanMantle_SerpentineTop,
         'OceanMantle_Gaussian'  : OceanMantle_Gaussian,
         'OceanMantle_BoxCar'    : OceanMantle_BoxCar,
     }

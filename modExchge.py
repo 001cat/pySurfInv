@@ -1,9 +1,8 @@
 import numpy as np
+import matplotlib.pyplot as plt
 from geographiclib.geodesic import Geodesic
 from Triforce.utils import GeoGrid,GeoMap
 from pySurfInv.utils import plotGrid,plotLayer
-
-
 from copy import deepcopy
 
 class Model1D_Exchange():
@@ -155,37 +154,39 @@ class Model3D_Exchange():
 
 
 if __name__ == '__main__':
-    from tqdm import tqdm
-    from Triforce.pltHead import *
-    mod3D = Model3D_Exchange(lons=np.arange(-136.0,-118.0+0.1+1,0.2),lats=np.arange(36,54+0.1,0.2))
-    mat = [[[] for _ in range(mod3D.grid.XX.shape[1])] for _ in range(mod3D.grid.XX.shape[0])] 
-    with open('/home/ayu/Projects/Cascadia-Land/Tasks/OtherStudies/bell2016/jgrb51815-sup-0002-supplementary.txt','r') as f:
-        for l in tqdm(f.readlines()):
-            strs = l.split()
-            if len(strs) == 2:
-                lon,lat = float(strs[0]),float(strs[1])
-                i,j = mod3D.grid._findInd(lon,lat)
-            if len(strs) == 4:
-                mat[i][j].append([float(s) for s in strs])
-    for i,lat in enumerate(mod3D.grid.lats):
-        for j,lon in enumerate(mod3D.grid.lons):
-            if mat[i][j]:
-                h,rho,vp,vs = np.array(mat[i][j]).T
-                mod = Model1D_Exchange({'h':h,'rho':rho,'vp':vp,'vs':vs})
-                mod3D.addMod(lon,lat,mod)
+    pass
+
+    # from tqdm import tqdm
+    # from Triforce.pltHead import *
+    # mod3D = Model3D_Exchange(lons=np.arange(-136.0,-118.0+0.1+1,0.2),lats=np.arange(36,54+0.1,0.2))
+    # mat = [[[] for _ in range(mod3D.grid.XX.shape[1])] for _ in range(mod3D.grid.XX.shape[0])] 
+    # with open('/home/ayu/Projects/Cascadia-Land/Tasks/OtherStudies/bell2016/jgrb51815-sup-0002-supplementary.txt','r') as f:
+    #     for l in tqdm(f.readlines()):
+    #         strs = l.split()
+    #         if len(strs) == 2:
+    #             lon,lat = float(strs[0]),float(strs[1])
+    #             i,j = mod3D.grid._findInd(lon,lat)
+    #         if len(strs) == 4:
+    #             mat[i][j].append([float(s) for s in strs])
+    # for i,lat in enumerate(mod3D.grid.lats):
+    #     for j,lon in enumerate(mod3D.grid.lons):
+    #         if mat[i][j]:
+    #             h,rho,vp,vs = np.array(mat[i][j]).T
+    #             mod = Model1D_Exchange({'h':h,'rho':rho,'vp':vp,'vs':vs})
+    #             mod3D.addMod(lon,lat,mod)
             
-    mod3D.save('test.npz')
-    mod3D = Model3D_Exchange('test.npz')
+    # mod3D.save('test.npz')
+    # mod3D = Model3D_Exchange('test.npz')
 
-    vsMap = mod3D.getMap(60,'vs')
-    from Triforce.customPlot import plotBasemap_Cascadia,cvcpt
-    _,m = plotBasemap_Cascadia()
-    m.pcolormesh(vsMap.XX,vsMap.YY,vsMap.z,shading='gouraud',latlon=True,cmap=cvcpt)
-    m.drawcoastlines();plt.colorbar()
+    # vsMap = mod3D.getMap(60,'vs')
+    # from Triforce.customPlot import plotBasemap_Cascadia,cvcpt
+    # _,m = plotBasemap_Cascadia()
+    # m.pcolormesh(vsMap.XX,vsMap.YY,vsMap.z,shading='gouraud',latlon=True,cmap=cvcpt)
+    # m.drawcoastlines();plt.colorbar()
 
 
-    XX,YY,Z = mod3D.getSection(45,-130,45,-122,'vs')
-    plt.figure()
-    plt.pcolormesh(XX,YY,Z,shading='gouraud',cmap=cvcpt,vmin=4.0,vmax=4.5)
-    plt.gca().invert_yaxis()
-    plt.colorbar()
+    # XX,YY,Z = mod3D.getSection(45,-130,45,-122,'vs')
+    # plt.figure()
+    # plt.pcolormesh(XX,YY,Z,shading='gouraud',cmap=cvcpt,vmin=4.0,vmax=4.5)
+    # plt.gca().invert_yaxis()
+    # plt.colorbar()

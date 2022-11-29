@@ -1,5 +1,4 @@
 import glob
-from tkinter import E
 import numpy as np
 from copy import deepcopy
 from Triforce.pltHead import *

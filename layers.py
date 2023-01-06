@@ -401,7 +401,7 @@ typeDict = {
         'LandCrust'                         : LandCrust,
         'ReferenceMantle'                   : ReferenceMantle,
         # For Cascadia
-        'OceanCrust_Therm'                  : OceanCrust_Therm
+        'OceanCrust_Therm'                  : OceanCrust_Therm,
         'OceanSediment_Cascadia'            : OceanSediment_Cascadia,
         'OceanMantle_CascadiaQ'             : OceanMantle_CascadiaQ,
         'OceanMantle_CascadiaQ_compatible'  : OceanMantle_CascadiaQ_20220305SingleLayerClass,

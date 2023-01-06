@@ -309,6 +309,18 @@ class OceanMantle_CascadiaQ_20220305SingleLayerClass(OceanMantle):
         qs = seisMod.qs
         return vp,rho,qs,qp
 
+class OceanCrust_Therm(OceanCrust):
+    def __init__(self,parm,prop={}) -> None:
+        super().__init__(parm,prop)
+        self.prop.update({'LayerName':'OceanCrust_Therm','Group':'crust'})
+    def _calVs(self, z, Tage, **kwargs):
+        from pySurfInv.OceanSeis import HSCM
+        mod0 = HSCM(4.0); T0_bottom = np.interp(self.parm['H'],mod0.zdeps,mod0.T)
+        mod  = HSCM(age=max(1e-3,Tage)); T_bottom = np.interp(self.parm['H'],mod.zdeps,mod.T)
+        v1 = self.parm['Vs'][0]
+        v2 = self.parm['Vs'][1] - max(0,(T_bottom-T0_bottom)*0.000378) # assume self.parm['Vs'][1] is for age >= 4 Ma
+        return np.linspace(v1,v2,len(z))
+
 class OceanMantle_ThermBsplineHybrid(OceanMantle_CascadiaQ):
     def __init__(self, parm, prop={}) -> None:
         super().__init__(parm, prop)
@@ -389,6 +401,7 @@ typeDict = {
         'LandCrust'                         : LandCrust,
         'ReferenceMantle'                   : ReferenceMantle,
         # For Cascadia
+        'OceanCrust_Therm'                  : OceanCrust_Therm
         'OceanSediment_Cascadia'            : OceanSediment_Cascadia,
         'OceanMantle_CascadiaQ'             : OceanMantle_CascadiaQ,
         'OceanMantle_CascadiaQ_compatible'  : OceanMantle_CascadiaQ_20220305SingleLayerClass,

@@ -168,7 +168,7 @@ class OceanSeisRitz(SeisModel):  # https://doi.org/10.1111/j.1365-246X.2004.0225
         self.zdeps = therMod.zdeps
         self.vs    = self._pt2vs(therMod.P/1e9,therMod.T)
 
-class OceanSeisRuan(SeisModel):  # https://doi.org/10.1016/j.epsl.2018.05.035
+class OceanSeisRuan_old(SeisModel):  # https://doi.org/10.1016/j.epsl.2018.05.035
     def __init__(self,therModel=None,damp=True,YaTaJu=False,period=50) -> None:
         if therModel is not None:
             self.fromThermal(therModel,damp,YaTaJu,period)
@@ -398,6 +398,143 @@ class OceanSeisPM13(SeisModel): # http://dx.doi.org/10.1016/j.epsl.2013.08.022
         vs = 1/np.sqrt(therModel.rho*J1)
         self.zdeps = therModel.zdeps
         self.vs    = vs
+
+
+
+class OceanSeisYaTa(SeisModel):  # https://doi.org/10.1002/2016JB013316
+    def __init__(self,therModel=None,Tm='Takei2017',period=50) -> None:
+        if therModel is not None:
+            self.fromThermal(therModel,Tm,period)
+        else:
+            self.zdeps = None
+            self.vs    = None
+
+    @staticmethod
+    def _anel(T,P,period,Tm):
+        ''' calculate anelasticity
+        T: temperature in K
+        P: pressure in Pa
+        period: seismic wave period in second
+        '''
+        from scipy.special import erf
+        def calTm(P,Tm): # solidus given pressure and temperature
+            P = P/1e9
+            if Tm == 'Ruan2018': # https://doi.org/10.1016/j.epsl.2018.05.035
+                Tm = -5.1*P**2 + 92.5*P + 1120.6 + 273.15
+            elif Tm == 'Hirschmann2009': # https://doi.org/10.1016/j.pepi.2009.04.001
+                Tm = -5.1*P**2 + 132.9*P + 1120.6 + 273.15
+            elif Tm == 'Takei2017': # https://doi.org/10.1146/annurev-earth-063016-015820
+                z = P*30 # in km
+                Tm = 1326 + (z-50) + 273.15
+            else:
+                try:
+                    Tm + 1 # check if Tm is a numerical variable
+                except:
+                    raise ValueError(f'Tm = {Tm} is not a numerical variable!')
+            return Tm
+        def calTauM(T,P,A_eta): # Maxwell time for viscous relaxation
+            E = 4.625e5
+            R = 8.314
+            V = 7.913e-6
+            etaR = 6.22e21
+            TR = 1200+273.15
+            PR = 1.5e9
+
+            mu_U = (72.45-0.01094*(T-273.15)+1.75*P*1e-9)*1e9
+            eta = etaR * np.exp(E/R*(1/T-1/TR)) * np.exp(V/R*(P/T-PR/TR)) * A_eta
+            tauM = eta/mu_U
+            return tauM
+        def calA_eta(Tn):
+            gamma = 5
+            Tn_eta = 0.94
+            minuslamphi = 0
+            Aeta = np.zeros(Tn.shape)
+            for i in range(len(Tn)):
+                if Tn[i]<Tn_eta:
+                    Aeta[i] = 1
+                elif Tn[i] < 1:
+                    Aeta[i] = np.exp( -(Tn[i]-Tn_eta)/(Tn[i]-Tn[i]*Tn_eta)*np.log(gamma) )
+                else:
+                    Aeta[i] = 1/gamma*np.exp(minuslamphi)
+            return Aeta
+        def A_P(Tn):
+            ap = np.zeros(Tn.shape)
+            for i in range(len(Tn)):
+                if Tn[i] < 0.91:
+                    ap[i] = 0.01
+                elif Tn[i] < 0.96:
+                    ap[i] = 0.01+0.4*(Tn[i]-0.91)
+                elif Tn[i] < 1:
+                    ap[i] = 0.03
+                else:
+                    ap[i] = 0.03+0
+            return ap
+        def sig_P(Tn):
+            sigp = np.zeros(Tn.shape)
+            for i in range(len(Tn)):
+                if Tn[i]<0.92:
+                    sigp[i] = 4
+                elif Tn[i] < 1:
+                    sigp[i] = 4+37.5*(Tn[i]-0.92)
+                else:
+                    sigp[i] = 7
+            return sigp
+
+        A_B = 0.664
+        tau_np = 6e-5
+        alpha = 0.38
+
+        Tn = T/calTm(P,Tm)
+
+        tau_M = calTauM(T,P,calA_eta(Tn))
+        tau_ns = period/(2*np.pi*tau_M)
+
+        J1b = A_B*(tau_ns**alpha)/alpha
+        J1p = np.sqrt(2*np.pi)/2*A_P(Tn)*sig_P(Tn)*(1-erf(np.log(tau_np/tau_ns)/(np.sqrt(2)*sig_P(Tn))))
+        J2b = np.pi/2* A_B*(tau_ns**alpha)
+        J2p = np.pi/2* (A_P(Tn)*np.exp(-((np.log(tau_np/tau_ns)/(np.sqrt(2)*sig_P(Tn)))**2)))
+        J2e = tau_ns
+        J1 = 1+J1b+J1p
+        J2 = J2b+J2p+J2e
+
+        return J1,J2
+
+    def fromThermal(self,therModel,Tm,period):
+        T,P = therModel.T,therModel.P
+        Ju = 1/(72.45-0.01094*(T-273.15)+1.987*P/1e9)*1e-9
+        J1,J2 = self._anel(T,P,period=period,Tm=Tm)
+        self.zdeps = therModel.zdeps
+        self.vs    = 1/np.sqrt(therModel.rho*Ju*J1)
+        self.vs_unrelaxed = 1/np.sqrt(therModel.rho*Ju)
+        self.qs    = J1/J2
+
+class OceanSeisYaTa_unrelaxed(SeisModel):  # https://doi.org/10.1002/2016JB013316
+    ''' unrelaxed only!!! '''
+    def fromThermal(self, therModel):
+        Ju = 1/(72.45-0.01094*(therModel.T-273.15)+1.987*therModel.P/1e9)*1e-9
+        vs = 1/np.sqrt(therModel.rho*Ju)
+        self.zdeps = therModel.zdeps
+        self.vs    = vs
+
+class OceanSeisRuan(OceanSeisYaTa): # https://doi.org/10.1016/j.epsl.2018.05.035
+    def __init__(self,therModel=None,period=50) -> None:
+        if therModel is not None:
+            self.fromThermal(therModel,period)
+        else:
+            self.zdeps = None
+            self.vs    = None
+    def fromThermal(self,therModel,period=50):
+        T,P = therModel.T,therModel.P
+        Ju = 1/(72.45-0.01094*(T-273.15)+1.75*P/1e9)*1e-9
+        J1,J2 = self._anel(T,P,period=period,Tm='Ruan2018')
+        self.zdeps = therModel.zdeps
+        self.vs    = 1/np.sqrt(therModel.rho*Ju*J1)
+        self.vs_unrelaxed = 1/np.sqrt(therModel.rho*Ju)
+        self.qs    = J1/J2
+
+
+
+
 
 
 def behn2009Shear(freq,d,T,P,coh=100):

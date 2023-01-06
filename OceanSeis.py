@@ -1,3 +1,4 @@
+# deprecated now, please use ThermSeis.py instead in new coding
 import numpy as np
 
 
@@ -148,7 +149,7 @@ class OceanSeisRitz(seisModel):  # https://doi.org/10.1111/j.1365-246X.2004.0225
         # plt.figure(figsize=[5.5,8])
         # plt.plot(rho,self.zdeps)
         K,mu = K*1e9,mu*1e9
-        vp,vs = np.sqrt(K+4/3*mu/rho),np.sqrt(mu/rho)
+        vp,vs = np.sqrt((K+4/3*mu)/rho),np.sqrt(mu/rho)
         self._rho = rho
         self._mu  = mu
         return vs
@@ -211,7 +212,7 @@ class OceanSeisRitz_fixed(seisModel):
         # plt.figure(figsize=[5.5,8])
         # plt.plot(rho,self.zdeps)
         K,mu = K*1e9,mu*1e9
-        vp,vs = np.sqrt(K+4/3*mu/rho),np.sqrt(mu/rho)
+        vp,vs = np.sqrt((K+4/3*mu)/rho),np.sqrt(mu/rho)
         self._rho = rho
         self._mu  = mu
         return vs

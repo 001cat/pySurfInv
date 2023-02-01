@@ -124,6 +124,7 @@ example-Cascadia/mcdata
 example-Cascadia/mcdata_priori
 MCtmp*
 tmp*
+/*.npz
 
 # macOS
 *.DS_Store

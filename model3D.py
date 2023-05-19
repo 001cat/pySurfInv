@@ -8,6 +8,7 @@ from Triforce.obspyPlus import randString
 from Triforce.pltHead import *
 from Triforce.customPlot import cvcpt,rbcpt,addAxes,addCAxes
 
+gmtBin = '/usr/bin/gmt'
 def mapSmooth(lons,lats,z,tension=0.0, width=50.):
     lons = lons.round(decimals=4)
     lats = lats.round(decimals=4)
@@ -17,9 +18,9 @@ def mapSmooth(lons,lats,z,tension=0.0, width=50.):
     savetxt(f'{tmpFname}.xyz',XX.flatten(),YY.flatten(),z.flatten())
     with open(f'{tmpFname}.bash','w+') as f:
         REG     = f'-R{lons[0]:.2f}/{lons[-1]:.2f}/{lats[0]:.2f}/{lats[-1]:.2f}'
-        f.writelines(f'gmt gmtset MAP_FRAME_TYPE fancy \n')
-        f.writelines(f'gmt surface {tmpFname}.xyz -T{tension} -G{tmpFname}.grd -I{dlon:.2f}/{dlat:.2f} {REG} \n')
-        f.writelines(f'gmt grdfilter {tmpFname}.grd -D4 -Fg{width} -G{tmpFname}_Smooth.grd {REG} \n')
+        f.writelines(f'{gmtBin} gmtset MAP_FRAME_TYPE fancy \n')
+        f.writelines(f'{gmtBin} surface {tmpFname}.xyz -T{tension} -G{tmpFname}.grd -I{dlon:.2f}/{dlat:.2f} {REG} \n')
+        f.writelines(f'{gmtBin} grdfilter {tmpFname}.grd -D4 -Fg{width} -G{tmpFname}_Smooth.grd {REG} \n')
     os.system(f'bash {tmpFname}.bash')
     from netCDF4 import Dataset
     with Dataset(f'{tmpFname}_Smooth.grd') as dset:
@@ -344,7 +345,7 @@ class Model3D(GeoGrid):
         return fig,ax1,ax2,cax1,cax2
 
     def _plotBasemap(self,loc='Cascadia',ax=None):
-        from Triforce.customPlot import plotLocalBase
+        from Triforce.basemap import plotLocalBase
         if loc=='Cascadia':
             minlon,maxlon,minlat,maxlat,dlon,dlat = -132,-121,39,50,2,3
         elif loc=='auto':
@@ -352,9 +353,9 @@ class Model3D(GeoGrid):
             dlat,dlon = (maxlat-minlat)//5,(maxlon-minlon)//3
         else:
             minlon,maxlon,minlat,maxlat,dlon,dlat = loc
-        fig,m = plotLocalBase(minlon,maxlon,minlat,maxlat,dlat=dlat,dlon=dlon,resolution='l',ax=ax)
-        m.readshapefile('/home/ayu/Projects/Cascadia/Models/Plates/PB2002_boundaries','PB2002_boundaries',
-            linewidth=2.0,color='orange')
+        fig,m = plotLocalBase(minlon,maxlon,minlat,maxlat,gridlines=dict(dlat=dlat,dlon=dlon),resolution='l',ax=ax)
+        # m.readshapefile('/home/ayu/Projects/Cascadia/Models/Plates/PB2002_boundaries','PB2002_boundaries',
+        #     linewidth=2.0,color='orange')
         return fig,m
     def plotMapView(self,mapTerm,loc='Cascadia',vmin=4.1,vmax=4.4,cmap=None):
         fig,m = self._plotBasemap(loc=loc)

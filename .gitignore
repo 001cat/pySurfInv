@@ -118,13 +118,12 @@ dmypy.json
 # Added manually
 MCtest
 MCtest_priori
-example-Cascadia/old
-example-Cascadia/output.txt
-example-Cascadia/mcdata
-example-Cascadia/mcdata_priori
+example-Cascadia
 MCtmp*
 tmp*
+/test*
 /*.npz
+/deprecated
 
 # macOS
 *.DS_Store

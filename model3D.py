@@ -1,31 +1,11 @@
-import os,glob
+import glob
 import numpy as np
 from geographiclib.geodesic import Geodesic
-from pySurfInv.models import buildModel1D,Model1D,Model1D_Puregird
+from pySurfInv.models import Model1D,PureGird
 from pySurfInv.point import PostPoint
-from Triforce.utils import GeoGrid,savetxt,GeoMap
-from Triforce.obspyPlus import randString
+from Triforce.utils import GeoGrid,GeoMap
 from Triforce.pltHead import *
-from Triforce.customPlot import cvcpt,rbcpt,addAxes,addCAxes
-
-# def mapSmooth(lons,lats,z,tension=0.0, width=50.):
-#     lons = lons.round(decimals=4)
-#     lats = lats.round(decimals=4)
-#     tmpFname = f'tmp{randString(10)}'
-#     XX,YY = np.meshgrid(lons,lats)
-#     dlon,dlat = lons[1]-lons[0],lats[1]-lats[0]
-#     savetxt(f'{tmpFname}.xyz',XX.flatten(),YY.flatten(),z.flatten())
-#     with open(f'{tmpFname}.bash','w+') as f:
-#         REG     = f'-R{lons[0]:.2f}/{lons[-1]:.2f}/{lats[0]:.2f}/{lats[-1]:.2f}'
-#         f.writelines(f'gmt gmtset MAP_FRAME_TYPE fancy \n')
-#         f.writelines(f'gmt surface {tmpFname}.xyz -T{tension} -G{tmpFname}.grd -I{dlon:.2f}/{dlat:.2f} {REG} \n')
-#         f.writelines(f'gmt grdfilter {tmpFname}.grd -D4 -Fg{width} -G{tmpFname}_Smooth.grd {REG} \n')
-#     os.system(f'bash {tmpFname}.bash')
-#     from netCDF4 import Dataset
-#     with Dataset(f'{tmpFname}_Smooth.grd') as dset:
-#         zSmooth = dset['z'][()]
-#     os.system(f'rm {tmpFname}* gmt.conf gmt.history')
-#     return zSmooth
+from Triforce.customPlot import cvcpt,addAxes,addCAxes
 
 def mapSmooth(lons,lats,z,tension=0.0, width=50.):
     zNew = GeoMap(lons,lats,z).smooth(tension=tension,width=width).z
@@ -140,7 +120,7 @@ class Model3D(GeoGrid):
                 outProfiles[-1].extend([k]*v)
             outProfiles = [np.array(p) for p in outProfiles[:-1]] + outProfiles[-1:]
             # print(len(outProfiles[-1]))
-            return Model1D_Puregird(outProfiles,info=mod.copy().info)
+            return PureGird(outProfiles,info=mod.copy().info)
 
         m,n = len(self.lats),len(self.lons)
         self._mods_avg = [ [None]*n for _ in range(m)]
@@ -180,7 +160,7 @@ class Model3D(GeoGrid):
                     grp = self.mods[i][j].seisPropGrids()[-1]
                     grp = np.delete(grp,iLayerDelete,-1)
                     inProfiles = [p for p in matSmooth[i,j,:,:]] + [grp]
-                    self.mods[i][j] = Model1D_Puregird(inProfiles,self.mods[i][j].info)
+                    self.mods[i][j] = PureGird(inProfiles,self.mods[i][j].info)
 
     def write(self,fname):
         np.savez_compressed(fname,lons=self.lons,lats=self.lats,

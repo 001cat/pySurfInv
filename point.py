@@ -5,11 +5,11 @@ from pySurfInv.models import buildModel1D
 from Triforce.pltHead import *
 from Triforce.obspyPlus import randString
 
-
-
 class Point(object):
-    def __init__(self,setting=None,localInfo={},periods=[],vels=[],uncers=[]):
-        self.initMod = buildModel1D(setting,localInfo)
+    def __init__(self,setting=None,localInfo={},modelTypeCustom=None,layerClassCustom={},
+                 periods=[],vels=[],uncers=[]):
+        self.initMod = buildModel1D(setting,localInfo,modelTypeCustom=modelTypeCustom,
+                                    layerClassCustom=layerClassCustom)
         self.obs = {'T':periods,'c':vels,'uncer':uncers} # Rayleigh wave, phase velocity only
         self.pid  = 'test'
     def misfit(self,model=None):
@@ -119,6 +119,7 @@ class Point(object):
     def copy(self):
         from copy import deepcopy
         return deepcopy(self)
+
 class PointCascadia(Point):
     def misfit(self,model=None):
         if model is None:
@@ -151,17 +152,14 @@ class PointCascadia(Point):
         L = np.exp(-0.5 * chiSqr)
         return misfit,chiSqr,L
 
-class PostPoint(PointCascadia):
-    def __init__(self,npzMC=None,npzPriori=None,realMCMC=False):
+class PostPoint(Point):
+    def __init__(self,npzMC=None,npzPriori=None,
+                 modelTypeCustom=None,layerClassCustom={}):
         if npzMC is not None:
             tmp = np.load(npzMC,allow_pickle=True)
             self.MC,setting,self.obs = tmp['mcTrack'],tmp['setting'][()],tmp['obs'][()]
-            self.initMod = buildModel1D(setting)
-            # try:
-            #     self.initMod = buildModel1D(setting)
-            # except:
-            #     from pySurfInv.models import Model1D
-            #     self.initMod = Model1D(); self.initMod.loadYML(setting)
+            self.initMod = buildModel1D(setting,modelTypeCustom=modelTypeCustom,
+                                        layerClassCustom=layerClassCustom)
                 
             self.N       = self.MC.shape[0]
             self.misfits = self.MC[:,0]
@@ -170,12 +168,11 @@ class PostPoint(PointCascadia):
             self.MCparas = self.MC[:,3:]
             self.MCparas_pri = None
 
-            if realMCMC:
-                for i in range(self.N):
-                    if self.accepts[i]:
-                        iAcc = i
-                    else:
-                        self.MCparas[i,:] = self.MCparas[iAcc,:]
+            for i in range(self.N):
+                if self.accepts[i]:
+                    iAcc = i
+                else:
+                    self.MCparas[i,:] = self.MCparas[iAcc,:]
 
             indMin = np.nanargmin(self.misfits)
             self.minMod         = self.initMod.copy()
@@ -194,76 +191,6 @@ class PostPoint(PointCascadia):
         if npzPriori is not None:
             tmp = np.load(npzPriori,allow_pickle=True)['mcTrack']
             self.MCparas_pri = tmp[:,3:]
-    def loadpyMCinv(self,dsetFile,id,invDir,priDir=None):
-        from MCinv.ocean_surf_dbase import invhdf5
-        setting_Hongda_pyMCinv = {'water': {'type': 'water',
-                                    'h':  [1,'fixed'],
-                                    'vp': [1.475,'fixed']},
-                                  'sediment': {'type': 'constant',
-                                    'h':  [2, 'abs', 1.0, 0.1],
-                                    'vs': [1.0, 'abs', 1.0, 0.01],
-                                    'vpvs': [2, 'fixed']},
-                                  'crust': {'type': 'linear',
-                                    'h': [7, 'abs',0.001,0.001],
-                                    'vs': [[3.25, 'abs', 0.001, 0.001],
-                                           [3.94, 'abs', 0.001, 0.001]],
-                                    'vpvs': [1.8, 'fixed']},
-                                  'mantle': {'type': 'Bspline',
-                                    'h': [200, 'total'],
-                                    'vs': [[4.4, 'rel', 10, 0.02],
-                                           [4.0, 'rel', 10, 0.02],
-                                           [4.3, 'rel', 10, 0.02],
-                                           [4.5, 'rel', 5, 0.02]],
-                                    'vpvs': [1.76, 'fixed']},
-                                  'Info':{'label':'Hongda-2021Summer'}}
-
-        dset = invhdf5(dsetFile,'r')
-        topo = dset[id].attrs['topo']
-        sedthk = dset[id].attrs['sedi_thk']
-        lithoAge = dset[id].attrs['litho_age']
-        self.initMod = buildModel1D(setting_Hongda_pyMCinv,
-                            {'topo':topo,'sedthk':sedthk,'lithoAge':lithoAge})
-
-        T,pvelp,pvelo,uncer = np.loadtxt(f'{invDir}/{id}_0.ph.disp').T
-        self.obs = {'T':T,'c':pvelo,'uncer':uncer}
-
-        inarr = np.load(f'{invDir}/mc_inv.{id}.npz')
-        invdata    = inarr['arr_0']
-        disppre_ph = inarr['arr_1']
-        disppre_gr = inarr['arr_2']
-        rfpre      = inarr['arr_3']
-
-        self.N        = invdata.shape[0]
-        self.accepts  = invdata[:,0]
-        iaccept       = invdata[:,1]
-        paraval       = invdata[:,2:11]
-        self.Ls       = invdata[:,11]
-        self.misfits  = invdata[:,12]
-
-        # vsed,vcrust1,vcrust2,vmantle1,vmantle2,vmantle3,vmantle4,hsed,hcrust
-        colOrder = np.array([7,0,8,1,2,3,4,5,6])
-        self.MCparas = paraval[:,colOrder]
-
-
-
-        indMin = np.nanargmin(self.misfits)
-        self.minMod         = self.initMod.copy()
-        self.minMod._loadMC(self.MCparas[indMin])
-        self.minMod.L       = self.Ls[indMin]
-        self.minMod.misfit  = self.misfits[indMin]
-
-        self.thres  = max(self.minMod.misfit*2, self.minMod.misfit+0.5)
-        self.accFinal = (self.misfits < self.thres)
-
-        self.avgMod         = self.initMod.copy()
-        self.avgMod._loadMC(np.mean(self.MCparas[self.accFinal,:],axis=0))
-        self.avgMod.misfit,self.avgMod.L = self.misfit(model=self.avgMod)
-
-        if priDir is not None:
-            inarr = np.load(f'{priDir}/mc_inv.{id}.npz')
-            invdata    = inarr['arr_0']
-            paraval       = invdata[:,2:11]
-            self.Priparas = paraval[:,colOrder]
     def plotDisp(self,ax=None,ensemble=True):
         T,vel,uncer = self.obs['T'],self.obs['c'],\
                       self.obs['uncer']
@@ -495,235 +422,53 @@ class PostPoint(PointCascadia):
 
         pass
 
-
-# For cascadia 
-from netCDF4 import Dataset
-from Triforce.utils import GeoMap
-class InvPointGenerator_Cascadia():
-    # modelsDir = '/projects/mewu4448/Projects/Cascadia/Models'  # for summit
-    modelsDir = '/home/ayu/Projects/Cascadia/Models'           # for marin
-    def __init__(self,npzfile) -> None:
-        import shapefile
-        from matplotlib.patches import Polygon
-        self.grd = np.load(npzfile,allow_pickle=True)['grd'][()]
-        self.eik = np.load(npzfile,allow_pickle=True)['eikStack'][()]
-
-        plates = shapefile.Reader(f'{self.modelsDir}/Plates/PB2002_plates.shp')
-        self.plateNA = Polygon(plates.shapes()[6].points).get_path()
-        self.platePA = Polygon(plates.shapes()[9].points).get_path()
-        self.plateJF = Polygon(plates.shapes()[26].points).get_path()
-        self.prismJF = Polygon(np.loadtxt('Input/prism.csv',delimiter=','))
-
-        with Dataset(f'{self.modelsDir}/ETOPO_Cascadia_smoothed.grd') as dset:
-            self.topo = GeoMap(dset['lon'][()],dset['lat'][()],dset['z'][()]/1000)
-        with Dataset(f'{self.modelsDir}/Crust1.0/crsthk.grd') as dset:
-            self.crsthk = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()])
-        with Dataset(f'{self.modelsDir}/Crust1.0/sedthk.grd') as dset:
-            self.sedthk = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()])
-        with Dataset(f'{self.modelsDir}/SedThick/sedthick_world_v2.grd') as dset:
-            self.sedthkOce = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()]/1000)
-        with Dataset(f'{self.modelsDir}/age_JdF_model_0.01.grd') as dset:
-            self.lithoAge = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()])
-
-        # slab_Hayes: Hayes, G., 2018, Slab2 - A Comprehensive Subduction Zone Geometry Model: 
-        # U.S. Geological Survey data release, https://doi.org/10.5066/F7PV6JNV.
-        with Dataset(f'{self.modelsDir}/Slab2_Cascadia/cas_slab2_dep_02.24.18.grd') as dset:
-            self.slabDep = GeoMap(dset['x'][()]-360,dset['y'][()],-dset['z'][()])
-        with Dataset(f'{self.modelsDir}/Slab2_Cascadia/cas_slab2_dip_02.24.18.grd') as dset:
-            self.slabDip = GeoMap(dset['x'][()]-360,dset['y'][()],dset['z'][()])
-
-        lons = np.arange(-132,-120,0.1); lats = np.arange(39,51,0.1)
-        prismThk = np.zeros((len(lats),len(lons)))*np.nan
-        for i in range(prismThk.shape[0]):
-            for j in range(prismThk.shape[1]):
-                lon,lat = lons[j],lats[i]
-                if np.isnan(self.sedthkOce.value(lon,lat)):
-                    prismThk[i,j] = self.slabDep.value(lon,lat) - max(-self.topo.value(lon,lat),0)-self.sedthk.value(lon,lat)
-                else:
-                    prismThk[i,j] = self.slabDep.value(lon,lat) - max(-self.topo.value(lon,lat),0)-self.sedthkOce.value(lon,lat)
-                if self.plateJF.contains_point((lon,lat)) or self.platePA.contains_point((lon,lat)):
-                    prismThk[i,j] = 0
-        self.prismthk = GeoMap(lons,lats,prismThk,mask=np.isnan(prismThk))
-        
-        # self.sedthkOce = GeoMap(); self.sedthkOce.load(f'{priorDir}/sedThk.npz')
-        self.mantleInitParmVs = GeoMap(); self.mantleInitParmVs.load(f'Input/parmVs_Ritzwoller.npz')
-
-    def getDisp(self,ptlon,ptlat):
-        grd,eik = self.grd,self.eik
-        try:
-            if grd._lon_type == '0 to 360':
-                ptlon += 360*(ptlon<0)
-            i,j = grd._findInd(ptlon,ptlat)
-        except:
-            raise ValueError(f'Point lon={ptlon} lat={ptlat} can not be found')
-        pers = [float(Tstr[:-1]) for Tstr in eik.keys()]
-
-        vels = np.array([eik[Tstr]['vel_iso'][i,j] for Tstr in eik.keys()])
-        sems = np.array([eik[Tstr]['vel_sem'][i,j] for Tstr in eik.keys()])
-        mask = np.array([eik[Tstr]['mask'][i,j] for Tstr in eik.keys()])
-
-        vels[mask] = np.nan
-        sems[mask] = np.nan
-        vels = np.ma.masked_array(vels,mask=mask)
-        sems = np.ma.masked_array(sems,mask=mask)
-        return pers,vels,sems
-
-    def genPoint(self,ptlat,ptlon,upscale=2,minUncer=0.005,loc=None,setting=(
-                'Input/cascadia-ocean.yml',
-                'Input/cascadia-prism.yml',
-                'Input/cascadia-continent.yml'
-                )):
-        ptlon -= 360*(ptlon>180)
-        pers,vels,sems = self.getDisp(ptlon,ptlat)
-        sems.mask[np.isnan(vels)] = True
-        vels.mask[np.isnan(vels)] = True
-        uncers = upscale*sems; uncers[uncers<minUncer] = minUncer
-        if (~vels.mask).sum() < 10:
-            print(f'Measurements < 10, skip')
-            return None,None
-        if ((not self.plateNA.contains_point((ptlon,ptlat))) and loc is None) or (loc=='ocean'):
-            print(f'Inside ocean plate')
-            outDir = 'OceanInv'
-            p = Point(setting[0],{
-                'topo':self.topo.value(ptlon,ptlat),
-                'lithoAge':self.lithoAge.value(ptlon,ptlat),
-                'sedthk':self.sedthkOce.value(ptlon,ptlat),
-                'mantleInitParmVs':self.mantleInitParmVs.value(ptlon,ptlat)
-                },periods=pers,vels=vels,uncers=uncers)
-        elif (self.prismJF.contains_point((ptlon,ptlat)) and loc is None) or (loc=='prism'):
-            print('In prism')
-            outDir = 'PrismInv'
-            p = Point(setting[1],{
-                'topo':self.topo.value(ptlon,ptlat),
-                'sedthk':self.sedthk.value(ptlon,ptlat) if np.isnan(self.sedthkOce.value(ptlon,ptlat)) else self.sedthkOce.value(ptlon,ptlat),
-                'prismthk':200 if np.isnan(self.prismthk.value(ptlon,ptlat)) else self.prismthk.value(ptlon,ptlat),
-                'lithoAge':10
-            },periods=pers,vels=vels,uncers=uncers)
-        elif loc in (None,'continent'):
-            print(f'In continent')
-            outDir = 'LandInv'
-            p = Point(setting[2],{
-                'topo':self.topo.value(ptlon,ptlat),
-                'sedthk':self.sedthk.value(ptlon,ptlat),
-                'crsthk':self.crsthk.value(ptlon,ptlat),
-                'lithoAge':10
-            },periods=pers,vels=vels,uncers=uncers)
-        elif loc == 'test':
-            outDir = 'test'
-            setting = 'Input/cascadia-prism-test.yml'
-            p = Point(setting,{
-                'topo':self.topo.value(ptlon,ptlat),
-                'sedthk':self.sedthk.value(ptlon,ptlat) if np.isnan(self.sedthkOce.value(ptlon,ptlat)) else self.sedthkOce.value(ptlon,ptlat),
-                'prismthk':200 if np.isnan(self.prismthk.value(ptlon,ptlat)) else self.prismthk.value(ptlon,ptlat),
-                'lithoAge':10
-            },periods=pers,vels=vels,uncers=uncers)
-        else:
-            raise ValueError(f'Wrong location specificated {loc}')
-
-        # return None if np.nan found in p.initMod
-        from pySurfInv.utils import _dictIterModifier
-        def checker(v):
-            try:
-                len(v);isnan=False
-            except:
-                isnan = bool(np.isnan(v))
-            if isnan:
-                raise ValueError('nan value found')
-            else:
-                return False
-        def modifier(v):
-            return v
-        try:
-            _dictIterModifier(p.initMod.toYML(),checker,modifier)
-        except ValueError as e:
-            if str(e) == 'nan value found':
-                return None,None
-            else:
-                raise e
-        
-        p.pid = f'{ptlon+360*(ptlon<0):.1f}_{ptlat:.1f}'
-        return p,outDir
-
-    def genPointLst(self):
-        raise ValueError('To be specificated')
-
-
-
-# Testing
-def synthetic_test():
-    random.seed(36)
-    periods = np.array([10,12,14,16,18,20,24,28,32,36,40,50,60,70,80])
-    mod1 = buildModel1D('cascadia-ocean.yml',{'topo':-4,'sedthk':0.6,'lithoAge':3})
-    mod2 = mod1.copy()
-    for _ in range(20):
-        mod2 = mod2.perturb()
-    p = Point('cascadia-ocean.yml',{'topo':-4,'lithoAge':3},periods=periods,
-              vels=mod2.forward(periods),uncers=[0.01]*len(periods))
-    p.MCinvMP(runN=50000,step4uwalk=1000,nprocess=26)
-    p.MCinvMP('MCtest_priori',runN=50000,step4uwalk=1000,nprocess=26,priori=True)
-
-    postp = PostPoint('MCtest/test.npz','MCtest_priori/test.npz')
-    postp.plotDisp()
-    postp.plotDistrib()
-    fig = postp.plotVsProfileGrid()
-    mod2.plotProfileGrid(fig=fig,label='True',lineStyle='--')
-    plt.legend()
-
-def realdata_test():
-    from netCDF4 import Dataset
-    from Triforce.utils import GeoMap
-    with Dataset('example-Cascadia/infos/ETOPO_Cascadia_smoothed.grd') as dset:
-        topo = GeoMap(dset['lon'][()],dset['lat'][()],dset['z'][()]/1000)
-    with Dataset('example-Cascadia/infos/sedthick_world_v2.grd') as dset:
-        sedthkOce = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()]/1000)
-    with Dataset('example-Cascadia/infos/age_JdF_model_0.01.grd') as dset:
-        lithoAge = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()])
-    topoDict = {
-        '232.0_46.0':topo.value(232.0,46.0),
-        '233.0_46.0':topo.value(233.0,46.0),
-        '234.0_46.0':topo.value(234.0,46.0)
-    }
-    sedthkDict = {
-        '232.0_46.0':0.8, #0.396
-        '233.0_46.0':sedthkOce.value(233.0,46.0),
-        '234.0_46.0':sedthkOce.value(234.0,46.0)
-    }
-    lithoAgeDict = {
-        '232.0_46.0':lithoAge.value(232.0,46.0),
-        '233.0_46.0':5, #6.73
-        '234.0_46.0':15 #8.10
-    }
-
-
-    for pid in ['232.0_46.0','233.0_46.0','234.0_46.0']:
-        postp = PostPoint(f'/work2/ayu/Cascadia/Works/invA0_2022_Jan10/OceanInv/{pid}.npz')
-        pers,vels,uncers = postp.obs['T'],postp.obs['c'],postp.obs['uncer']
-        if pid == '233.0_46.0':
-            pers,vels,uncers = pers[:-1],vels[:-1],uncers[:-1]
-        p = Point('cascadia-ocean.yml',{
-            'topo':topoDict[pid],
-            'lithoAge':lithoAgeDict[pid],
-            'sedthk':sedthkDict[pid]},
-                periods=pers,vels=vels,uncers=uncers)
-        if pid == '233.0_46.0':
-            from pySurfInv.brownian import BrownianVar
-            p.initMod._layers[-1].parm['Vs'][1] = BrownianVar(-0.2,-0.6,0.2,0.02)
-        p.pid = pid
-        p.MCinvMP(runN=17000,step4uwalk=1000,nprocess=17)
-        p.MCinvMP('MCtest_priori',runN=17000,step4uwalk=1000,nprocess=17,priori=True)
-
-    fig = plt.figure(figsize=[5,8.4])
-    for pid in ['232.0_46.0','233.0_46.0','234.0_46.0']:
-        postp = PostPoint(f'MCtest/{pid}.npz',f'MCtest_priori/{pid}.npz')
-        postp.avgMod.plotProfileGrid(fig=fig,label=pid)
-    plt.legend()
-    plt.xlim(4.0,4.8)
-
-    pid = '232.0_46.0'
-    postp = PostPoint(f'MCtest/{pid}.npz',f'MCtest_priori/{pid}.npz')
-    postp.plotVsProfileGrid()
-    postp.plotDistrib([0,-1])
-    postp.plotDisp()
+class PostPointCascadia(PostPoint):
+    misfit = PointCascadia.misfit
 
 if __name__ == '__main__':
+    setting = {
+        'OceanWater'            : {'H':2},
+        'OceanSedimentCascadia' : {'H':[1,'rel_pos',100,0.1]},
+        'OceanCrust'            : {'H':7, 'Vs':[3.25, 3.94]},
+        'OceanMantleHybrid'     : {'BottomDepth':200, 
+                                   'Conversion':'Ritzwoller',
+                                   'ThermAge':[4,'rel_pos',200,0.4],
+                                   'Vs': [[0, 'abs', 0.4, 0.01],
+                                          [0, 'abs', 0.4, 0.01],
+                                          [0, 'abs', 0.4, 0.01],
+                                          [0, 'abs', 0.2, 0.01]]
+                                   },
+        'Info':{
+            'modelType' : 'CascadiaOcean',
+            'period'    : 10,
+            'refLayer'  : True,
+            'lithoAgeQ' : True
+        }
+    }
+
+    p = PointCascadia(setting,localInfo={
+        'topo':-2.567706,
+        'lithoAge':0.6,
+        'sedthk':0.019,
+        'mantleInitParmVs':[-0.3426920324186606,-0.1863907997418917,
+                            -0.1882828662382096,-0.05648363217566826]
+        },
+        periods = [10,12,14,16,18,20,22,24,26,28,30,32,36,40,50,60,70,80],
+        vels    = [3.5724066175576223, 3.6222019289297043, 3.6520621581430763, 3.6588731735179367,
+                   3.673255450218663,  3.683443600610537,  3.6844591498161896, 3.689993791502759,
+                   3.6935745493241487, 3.696092260762209,  3.707185398688356,  3.7148258328900985,
+                   3.7209668755498257, 3.7486729577980427, 3.7706463827824748, 3.82144353111797,
+                   3.8603954933518914, 3.9030011211762767],
+        uncers  = [0.006550350458769691, 0.005, 0.005, 0.005,
+                   0.005, 0.005, 0.005, 0.005, 
+                   0.005, 0.005, 0.005, 0.005499996722895128, 
+                   0.00751713560920708, 0.007910350806141024, 0.007711019920661203, 0.010152973423528881,
+                   0.01062776863809981, 0.015829560954127662]
+        )
+    p.MCinvMP(f'test',pid='test',runN=24000,step4uwalk=800,nprocess=20)
+    p.MCinvMP(f'test_priori',pid='test',runN=24000,step4uwalk=800,nprocess=20,priori=True)
+    postp = PostPointCascadia('test/test.npz')
+    postp.plotVsProfileGrid()
+    postp.plotDisp()
+    postp.plotCheck()
     pass

@@ -1,114 +1,173 @@
-import sys
 import numpy as np
-from Triforce.utils import GeoGrid,GeoMap
-from pySurfInv.point import Point
-from pySurfInv.model3D import Model3D
+from Triforce.pltHead import *
+from Triforce.utils import GeoMap
+from pySurfInv.point import PointCascadia as Point
 
-def npzConvert():
-    tmp = np.load('/home/ayu/Projects/Cascadia/Tomo/ani_tomo_A0_finalSZ.npz',allow_pickle=True)
-    grd,eik = tmp['grd'][()],tmp['eikStack'][()]
+class InvPointGenerator_Cascadia():
+    infoDir  = '/home/ayu/Projects/JdF-Model/Models'
+    inputDir = 'Input'
+    def __init__(self,npzfile) -> None:
+        import shapefile
+        from matplotlib.patches import Polygon
+        self.grd = np.load(npzfile,allow_pickle=True)['grd'][()]
+        self.eik = np.load(npzfile,allow_pickle=True)['eikStack'][()]
 
-    lats,lons = grd.lats,grd.lons
-    np.savez_compressed('ani_tomo_A0_finalSZ.npz',lats=lats,lons=lons,eikStack=eik)
+        plates = shapefile.Reader(f'{self.infoDir}/Plates/PB2002_plates.shp')
+        self.plateNA = Polygon(plates.shapes()[6].points).get_path()
+        self.platePA = Polygon(plates.shapes()[9].points).get_path()
+        self.plateJF = Polygon(plates.shapes()[26].points).get_path()
+        self.prismJF = Polygon(np.loadtxt(f'{self.inputDir}/prism.csv',delimiter=','))
 
+        import netCDF4 as nc4
+        with nc4.Dataset(f'{self.infoDir}/ETOPO_Cascadia_smoothed.grd') as dset:
+            self.topo = GeoMap(dset['lon'][()],dset['lat'][()],dset['z'][()]/1000)
+        with nc4.Dataset(f'{self.infoDir}/Crust1.0/crsthk.grd') as dset:
+            self.crsthk = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()])
+        with nc4.Dataset(f'{self.infoDir}/Crust1.0/sedthk.grd') as dset:
+            self.sedthk = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()])
+        with nc4.Dataset(f'{self.infoDir}/SedThick/sedthick_world_v2.grd') as dset:
+            self.sedthkOce = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()]/1000)
+        with nc4.Dataset(f'{self.infoDir}/age_JdF_model_0.01.grd') as dset:
+            self.lithoAge = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()])
 
-def loadNpz():
-    tmp = np.load('ani_tomo_A0_finalSZ.npz',allow_pickle=True)
-    lats,lons,eik = tmp['lats'][()],tmp['lons'][()],tmp['eikStack'][()]
-    geoGrid = GeoGrid(lons=lons,lats=lats)
-    return geoGrid,eik
+        # slab_Hayes: Hayes, G., 2018, Slab2 - A Comprehensive Subduction Zone Geometry Model: 
+        # U.S. Geological Survey data release, https://doi.org/10.5066/F7PV6JNV.
+        with nc4.Dataset(f'{self.infoDir}/Slab2_Cascadia/cas_slab2_dep_02.24.18.grd') as dset:
+            self.slabDep = GeoMap(dset['x'][()]-360,dset['y'][()],-dset['z'][()])
+        with nc4.Dataset(f'{self.infoDir}/Slab2_Cascadia/cas_slab2_dip_02.24.18.grd') as dset:
+            self.slabDip = GeoMap(dset['x'][()]-360,dset['y'][()],dset['z'][()])
 
-def loadGeoMaps():
-    from netCDF4 import Dataset
-    with Dataset('infos/ETOPO_Cascadia_smoothed.grd') as dset:
-        topo = GeoMap(dset['lon'][()],dset['lat'][()],dset['z'][()]/1000)
-    with Dataset('infos/crsthk.grd') as dset:
-        crsthk = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()])
-    with Dataset('infos/sedthk.grd') as dset:
-        sedthk = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()])
-    with Dataset('infos/sedthick_world_v2.grd') as dset:
-        sedthkOce = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()]/1000)
-    with Dataset('infos/age_JdF_model_0.01.grd') as dset:
-        lithoAge = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()])
-    return topo,sedthk,crsthk,sedthkOce,lithoAge
+        lons = np.arange(-132,-120,0.1); lats = np.arange(39,51,0.1)
+        prismThk = np.zeros((len(lats),len(lons)))*np.nan
+        for i in range(prismThk.shape[0]):
+            for j in range(prismThk.shape[1]):
+                lon,lat = lons[j],lats[i]
+                if np.isnan(self.sedthkOce.value(lon,lat)):
+                    prismThk[i,j] = self.slabDep.value(lon,lat) - max(-self.topo.value(lon,lat),0)-self.sedthk.value(lon,lat)
+                else:
+                    prismThk[i,j] = self.slabDep.value(lon,lat) - max(-self.topo.value(lon,lat),0)-self.sedthkOce.value(lon,lat)
+                if self.plateJF.contains_point((lon,lat)) or self.platePA.contains_point((lon,lat)):
+                    prismThk[i,j] = 0
+        self.prismthk = GeoMap(lons,lats,prismThk,mask=np.isnan(prismThk))
+        
+        # self.sedthkOce = GeoMap(); self.sedthkOce.load(f'{priorDir}/sedThk.npz')
+        self.mantleInitParmVs = GeoMap(); self.mantleInitParmVs.load(f'{self.inputDir}/parmVs_Ritzwoller.npz')
 
-def getMask(geoGrid:GeoGrid):
-    from matplotlib.patches import Polygon
-    bounds = [(-131,40.5726),(-127.717, 40.5726),(-127.579, 40.5385),(-127.579, 40.45),(-126.869, 40.4224),(-126.159, 40.3904),\
-        (-125.45, 40.3541),(-124.742, 40.3134), (-124.953, 40.6333), (-124.933, 40.8839), (-125.089, 41.1354), (-125.182, 41.3801), \
-        (-125.309, 41.6522), (-125.281, 41.8176), (-125.313, 41.9856), (-125.331, 42.1419), (-125.29, 42.2845), (-125.209, 42.3588), (-125.198, 42.4917), \
-        (-125.268, 42.5614), (-125.289, 42.8624), (-125.289, 43.0514), (-125.343, 43.1426), (-125.394, 43.2671), (-125.474, 43.426), (-125.48, 43.7375), \
-        (-125.45, 43.9254), (-125.429, 44.0023), (-125.362, 44.0663), (-125.372, 44.3226), (-125.372, 44.5227), (-125.376, 44.6675), (-125.434, 44.7254), \
-        (-125.437, 44.8813), (-125.435, 45.1036), (-125.517, 45.4738), (-125.655, 45.9461), (-125.773, 46.295), (-125.876, 46.6433), (-125.998, 46.9697), \
-        (-126.085, 47.3503), (-126.37, 47.748), (-126.486, 47.9956), (-126.733, 48.291), (-127.018, 48.5646), (-127.378, 48.7502), (-127.608, 48.8768),\
-        (-131,48.8768),(-131,40.5726)]
-    poly_path = Polygon(bounds).get_path()
-
-    mask = np.ones(geoGrid.XX.shape,dtype=bool)
-    for lon in geoGrid.lons:
-        for lat in geoGrid.lats:
-            i,j = geoGrid._findInd(lon,lat)
-            mask[i,j] = not poly_path.contains_point((lon-360*(lon>=180),lat))
-
-    return mask
-
-def runMC():
-    def getDisp(geoGrid,eik,lon,lat):
-        i,j = geoGrid._findInd(lon,lat)
+    def getDisp(self,ptlon,ptlat):
+        grd,eik = self.grd,self.eik
+        try:
+            if grd._lon_type == '0 to 360':
+                ptlon += 360*(ptlon<0)
+            i,j = grd._findInd(ptlon,ptlat)
+        except:
+            raise ValueError(f'Point lon={ptlon} lat={ptlat} can not be found')
         pers = [float(Tstr[:-1]) for Tstr in eik.keys()]
+
         vels = np.array([eik[Tstr]['vel_iso'][i,j] for Tstr in eik.keys()])
         sems = np.array([eik[Tstr]['vel_sem'][i,j] for Tstr in eik.keys()])
         mask = np.array([eik[Tstr]['mask'][i,j] for Tstr in eik.keys()])
-        if np.any(mask):
-            return None,None,None
+
+        vels[mask] = np.nan
+        sems[mask] = np.nan
+        vels = np.ma.masked_array(vels,mask=mask)
+        sems = np.ma.masked_array(sems,mask=mask)
         return pers,vels,sems
 
-    geoGrid,eik = loadNpz()
-    topo,sedthk,crsthk,sedthkOce,lithoAge = loadGeoMaps()
-    invAreaMask = getMask(geoGrid)
+    def genPoint(self,ptlat,ptlon,upscale=2,minUncer=0.005,loc=None,setting=(
+                'Input/cascadia-ocean.yml',
+                'Input/cascadia-prism.yml',
+                'Input/cascadia-continent.yml'
+                )) -> Point:
+        ptlon -= 360*(ptlon>180)
+        pers,vels,sems = self.getDisp(ptlon,ptlat)
+        sems.mask[np.isnan(vels)] = True
+        vels.mask[np.isnan(vels)] = True
+        uncers = upscale*sems; uncers[uncers<minUncer] = minUncer
+        if (~vels.mask).sum() < 10:
+            print(f'Measurements < 10, skip')
+            return None,None
+        if ((not self.plateNA.contains_point((ptlon,ptlat))) and loc is None) or (loc=='ocean'):
+            print(f'Inside ocean plate')
+            outDir = 'OceanInv'
+            p = Point(setting[0],{
+                        'topo':self.topo.value(ptlon,ptlat),
+                        'lithoAge':self.lithoAge.value(ptlon,ptlat),
+                        'sedthk':self.sedthkOce.value(ptlon,ptlat),
+                        'mantleInitParmVs':self.mantleInitParmVs.value(ptlon,ptlat)
+                    },
+                    periods=pers,vels=vels,uncers=uncers)
+        elif (self.prismJF.contains_point((ptlon,ptlat)) and loc is None) or (loc=='prism'):
+            return None,None
+            # print('In prism')
+            # outDir = 'PrismInv'
+            # p = Point(setting[1],{
+            #     'topo':self.topo.value(ptlon,ptlat),
+            #     'sedthk':self.sedthk.value(ptlon,ptlat) if np.isnan(self.sedthkOce.value(ptlon,ptlat)) else self.sedthkOce.value(ptlon,ptlat),
+            #     'prismthk':200 if np.isnan(self.prismthk.value(ptlon,ptlat)) else self.prismthk.value(ptlon,ptlat),
+            #     'lithoAge':10
+            # },periods=pers,vels=vels,uncers=uncers)
+        elif loc in (None,'continent'):
+            return None,None
+            # print(f'In continent')
+            # outDir = 'LandInv'
+            # p = Point(setting[2],{
+            #     'topo':self.topo.value(ptlon,ptlat),
+            #     'sedthk':self.sedthk.value(ptlon,ptlat),
+            #     'crsthk':self.crsthk.value(ptlon,ptlat),
+            #     'lithoAge':10
+            # },periods=pers,vels=vels,uncers=uncers)
+        elif loc == 'test':
+            pass
+            # outDir = 'test'
+            # setting = 'Input/cascadia-prism-test.yml'
+            # p = Point(setting,{
+            #     'topo':self.topo.value(ptlon,ptlat),
+            #     'sedthk':self.sedthk.value(ptlon,ptlat) if np.isnan(self.sedthkOce.value(ptlon,ptlat)) else self.sedthkOce.value(ptlon,ptlat),
+            #     'prismthk':200 if np.isnan(self.prismthk.value(ptlon,ptlat)) else self.prismthk.value(ptlon,ptlat),
+            #     'lithoAge':10
+            # },periods=pers,vels=vels,uncers=uncers)
+        else:
+            raise ValueError(f'Wrong location specificated {loc}')
 
+        # return None if np.nan found in p.initMod
+        from pySurfInv.utils import _dictIterModifier
+        def checker(v):
+            try:
+                len(v);isnan=False
+            except:
+                isnan = bool(np.isnan(v))
+            if isnan:
+                raise ValueError('nan value found')
+            else:
+                return False
+        def modifier(v):
+            return v
+        try:
+            _dictIterModifier(p.initMod.toYML(),checker,modifier)
+        except ValueError as e:
+            if str(e) == 'nan value found':
+                return None,None
+            else:
+                raise e
+        
+        p.pid = f'{ptlon+360*(ptlon<0):.1f}_{ptlat:.1f}'
+        return p,outDir
 
-    for lon in geoGrid.lons:
-        for lat in geoGrid.lats:
+    def genPointLst(self):
+        pList = []
+        for lon in self.grd.lons:
+            for lat in self.grd.lats:
+                p,outDir = self.genPoint(lat,lon,4,0.005)
+                if p is not None:
+                    pList.append((p,outDir))
+        return pList
 
-            i,j = geoGrid._findInd(lon,lat)
-            if invAreaMask[i,j]:
-                continue
+# pGen = InvPointGenerator_Cascadia('Input/ani_tomo_A0_finalInv.npz')
+# p,_ = pGen.genPoint(45,-130)
+# p.MCinvMP(f'test',runN=24000,step4uwalk=800,nprocess=20)
+# p.MCinvMP(f'test_priori',runN=24000,step4uwalk=800,nprocess=20,priori=True)
+# from pySurfInv.point import PostPoint
+# postp = PostPoint('test/230.0_45.0.npz',realMCMC=True)
 
-            pers,vels,sems = getDisp(geoGrid,eik,lon,lat)
-            if pers is None:
-                invAreaMask[i,j] = 1
-                continue
-
-            # if f'{lon:.1f}_{lat:.1f}' != '233.0_46.0':
-            #     continue
-
-            print(f'Running inversion: lon={lon:.1f} lat={lat:.1f}')
-
-            p = Point('cascadia-ocean.yml',{
-                'topo':topo.value(lon,lat),
-                'sedthk':sedthkOce.value(lon,lat),
-                'lithoAge':lithoAge.value(lon,lat)
-                },periods=pers,vels=vels,uncers=sems*4)
-            p.pid = f'{lon:.1f}_{lat:.1f}'
-            p.MCinvMP(f'mcdata',runN=50000,step4uwalk=1000,nprocess=17)
-            p.MCinvMP(f'mcdata_priori',runN=50000,step4uwalk=1000,nprocess=17,priori=True)
-            
-
-
-if __name__ == '__main__':
-    runMC()
-
-    mod = Model3D(); mod.loadInvDir('example-Cascadia/mcdata')
-    mod.load('invModel.npz');mod.smoothGrid(width=80);mod.write('invModel-Smooth.npz')
-
-    mod.plotMapView(100,'auto',vmin=4.0,vmax=4.5)
-    mod.plotSection(-130.2+360,46,-125.6+360,46,maxD=200,title='Lat = 46$\degree$')
-
-    
-
-
-
-
-
-
+pGen = InvPointGenerator_Cascadia('Input/ani_tomo_A0_finalInv.npz')
+pList = pGen.genPointLst()

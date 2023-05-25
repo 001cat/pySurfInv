@@ -69,7 +69,7 @@ class Model1D():
         return deepcopy(ymlDict)
 
     # offer structure information 
-    def seisPropGrids(self,refLayer=False,_layerName=False):
+    def seisPropGrids(self,refLayer=False,_layerName=False,hLowerLimit=0.01):
         layers = self.layers.copy(); layers += [self._refLayer.copy()] if refLayer else []
         z0 = -max(self.info.get('topo',0),0)
         z,vs,vp,rho,qs,qp,grp,layerName = [],[],[],[],[],[],[],[]
@@ -77,7 +77,7 @@ class Model1D():
             z1,vs1,vp1,rho1,qs1,qp1 = layer.seisPropGrids(
                 layersAbove =[z,vs,vp,rho,qs,qp,grp,layerName],
                 modelInfo = self.info)
-            if z1[-1]-z1[0] < 0.01:
+            if z1[-1]-z1[0] < hLowerLimit:
                 continue
             z += list(z1+z0); vs += list(vs1); vp += list(vp1); rho += list(rho1); qs += list(qs1); qp += list(qp1)
             grp         += [layer.prop['Group']]*len(z1)
@@ -151,7 +151,7 @@ class Model1D():
             return None
     @property
     def _refLayer(self):
-        return buildSeisLayer({'BottomDepth':300,'Slope':0.35/200},layerClassDefault['ReferenceMantle'])
+        return buildSeisLayer({'H':300,'Slope':0.35/200},layerClassDefault['ReferenceMantle'])
     @property
     def layers(self):
         return self._layers
@@ -173,6 +173,8 @@ class PureGird(Model1D):
             parmLayer = {}
             for k,v in parm.items():
                 parmLayer[k] = v[I]
+                if k == 'z':
+                    parmLayer[k] = parmLayer[k]-parmLayer[k][0]
             self._layers.append(PureGrid(parmLayer,prop={'Group':grp}))
         self.info = info
     def loadYML(self, ymlFile, localInfo={}):

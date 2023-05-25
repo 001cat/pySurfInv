@@ -99,10 +99,9 @@ class Model3D(GeoGrid):
                 if not mask[i,j]:
                     self._mods_avg[i][j] = self.mods[i][j].copy()
                     self.mods[i][j]._loadMC(paras[i][j])
-    def smoothGrid(self,width=50):
+    def smoothGrid(self,width=50,nSeisProp=6,
+                   nGridsDict={'water':2,'sediment':6,'prism':10,'crust':30,'mantle':200}):
         ''' To combine and smooth areas with different model settings '''
-        nGridsDict = {'water':2,'sediment':6,'prism':10,'crust':30,'mantle':200}
-        nSeisProp = 6
         def mod2grid(mod:Model1D):
             inProfiles = mod.seisPropGrids()
             outProfiles= [[] for _ in range(len(inProfiles))]
@@ -113,7 +112,13 @@ class Model3D(GeoGrid):
                 for i in range(len(inProfiles)-1):
                     n = len(inProfiles[i][I])
                     if n == 0:
-                        outProfiles_seg = np.zeros(v)*np.nan
+                        if i == 0: # depth
+                            if outProfiles[0]:
+                                outProfiles_seg = np.ones(v)*outProfiles[0][-1]
+                            else:
+                                outProfiles_seg = np.ones(v)*inProfiles[0][0]
+                        else: # Vs, Vp, ...
+                            outProfiles_seg = np.zeros(v)*np.nan
                     else:
                         outProfiles_seg = np.interp(np.linspace(0,1,v),np.linspace(0,1,n),inProfiles[i][I])
                     outProfiles[i].extend(list(outProfiles_seg))
@@ -133,7 +138,7 @@ class Model3D(GeoGrid):
                 if self.mods[i][j] is None:
                     mat[i,j,:,:] = np.nan
                 else:
-                    mat[i,j,:,:] = np.array(self.mods[i][j].seisPropGrids()[:-1])
+                    mat[i,j,:,:] = np.array(self.mods[i][j].seisPropGrids(hLowerLimit=-1)[:-1])
 
         # remove all nan layer
         iLayerDelete = []
@@ -157,7 +162,7 @@ class Model3D(GeoGrid):
                     # if np.any(np.isnan(np.sum(matSmooth[i,j,:,:],axis=0))):
                     #     from IPython import embed; embed()
                     matSmooth[i,j,0,np.isnan(np.sum(matSmooth[i,j,:,:],axis=0))] = 0
-                    grp = self.mods[i][j].seisPropGrids()[-1]
+                    grp = self.mods[i][j].seisPropGrids(hLowerLimit=-1)[-1]
                     grp = np.delete(grp,iLayerDelete,-1)
                     inProfiles = [p for p in matSmooth[i,j,:,:]] + [grp]
                     self.mods[i][j] = PureGird(inProfiles,self.mods[i][j].info)
@@ -332,7 +337,7 @@ class Model3D(GeoGrid):
         return fig,ax1,ax2,cax1,cax2
 
     def _plotBasemap(self,loc='Cascadia',ax=None):
-        from Triforce.customPlot import plotLocalBase
+        from Triforce.basemap import plotLocalBase
         if loc=='Cascadia':
             minlon,maxlon,minlat,maxlat,dlon,dlat = -132,-121,39,50,2,3
         elif loc=='auto':
@@ -342,8 +347,8 @@ class Model3D(GeoGrid):
             minlon,maxlon,minlat,maxlat,dlon,dlat = loc
         fig,m = plotLocalBase(minlon,maxlon,minlat,maxlat,resolution='l',ax=ax,
                               gridlines={'dlat':dlat,'dlon':dlon})
-        m.readshapefile('/home/ayu/Projects/Cascadia/Models/Plates/PB2002_boundaries','PB2002_boundaries',
-            linewidth=2.0,color='orange')
+        # m.readshapefile('/home/ayu/Projects/Cascadia/Models/Plates/PB2002_boundaries','PB2002_boundaries',
+        #     linewidth=2.0,color='orange')
         return fig,m
     def plotMapView(self,mapTerm,loc='Cascadia',vmin=4.1,vmax=4.4,cmap=None):
         fig,m = self._plotBasemap(loc=loc)

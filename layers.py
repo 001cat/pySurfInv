@@ -274,6 +274,15 @@ class ReferenceMantle(OceanMantle):
         layersAbove = kwargs['layersAbove']
         vs0 = layersAbove[1][-1] # z,vs,vp,rho,qs,qp,grp,layerName
         return np.linspace(vs0,vs0+(z[-1]-z[0])*self.parm['Slope'],len(z))
+    def _calOthers(self, z, vs, **kwargs):
+        vp,rho,qs,qp = super()._calOthers(z,vs,**kwargs)
+        layersAbove = kwargs['layersAbove']
+        vp0 = layersAbove[2][-1];  vp = vp0 + (vp-vp[0])
+        rho0 = layersAbove[3][-1]; rho = rho0 + (rho-rho[0])
+        qs0 = layersAbove[4][-1];  qs = qs0 + (qs-qs[0])
+        qp0 = layersAbove[5][-1];  qp = qp0 + (qp-qp[0])
+        return vp,rho,qs,qp
+        
 
 
 # Juan de Fuca Specified

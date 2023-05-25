@@ -154,7 +154,8 @@ class PointCascadia(Point):
 
 class PostPoint(Point):
     def __init__(self,npzMC=None,npzPriori=None,
-                 modelTypeCustom=None,layerClassCustom={}):
+                 modelTypeCustom=None,layerClassCustom={},
+                 trueMarkovChain=True):
         if npzMC is not None:
             tmp = np.load(npzMC,allow_pickle=True)
             self.MC,setting,self.obs = tmp['mcTrack'],tmp['setting'][()],tmp['obs'][()]
@@ -168,11 +169,12 @@ class PostPoint(Point):
             self.MCparas = self.MC[:,3:]
             self.MCparas_pri = None
 
-            for i in range(self.N):
-                if self.accepts[i]:
-                    iAcc = i
-                else:
-                    self.MCparas[i,:] = self.MCparas[iAcc,:]
+            # if trueMarkovChain:
+            #     for i in range(self.N):
+            #         if self.accepts[i]:
+            #             iAcc = i
+            #         else:
+            #             self.MCparas[i,:] = self.MCparas[iAcc,:]
 
             indMin = np.nanargmin(self.misfits)
             self.minMod         = self.initMod.copy()

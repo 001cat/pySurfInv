@@ -340,6 +340,9 @@ class OceanMantleHybrid(OceanMantle):
         zMelt = meltStart(max(1e-3,self.parm['ThermAge']))-crustH
         vs = merge2(z,seisMod.vs,self._bspl(z,nBasis)*np.array([0]+list(self.parm['Vs']))+seisMod.vs,
                    xL=zMelt,xH=(zMelt+crustH)*1.7-crustH)
+        
+        # print(max(1e-3,self.parm['ThermAge']),crustH+z,Tp,conversionModel) ## Ayu
+
         self._debug_zMelt = zMelt
 
         return vs

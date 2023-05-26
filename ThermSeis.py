@@ -88,12 +88,14 @@ class HSCM(TherModel):
         theta = erf(zdeps*1e3/(2*np.sqrt(age*365*24*3600*1*(kappa/1e-6))))# suppose kappa=1e-6
         T = (Tm-T0)*theta+T0
         try:
-            # adiaBegin = np.where(np.diff(T)/np.diff(zdeps) < Da)[0][0]
-            adiaBegin = np.where(zdeps > z_adiaBegin)[0][0]
-            if adiaBegin == 0:
-                T = T_adiabatic
-            else:
-                T[adiaBegin:] = T_adiabatic[adiaBegin:]
+            adiaBegin = np.where(np.diff(T)/np.diff(zdeps) < Da)[0][0]
+            T[adiaBegin:] = T_adiabatic[adiaBegin:]
+
+            # adiaBegin = np.where(zdeps > z_adiaBegin)[0][0]   # Fixing?
+            # if adiaBegin == 0:
+            #     T = T_adiabatic
+            # else:
+            #     T[adiaBegin:] = T_adiabatic[adiaBegin:]
         except:
             pass
         # return Tp*np.ones(self.zdeps.shape)

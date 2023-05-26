@@ -48,7 +48,7 @@ class Point(object):
                 if init:
                     mod0 = self.initMod.copy();init=False
                     if not isgood(mod0):
-                        mod0 = mod0.perturb(isgood)
+                        mod0 = mod0.perturb(isgood,verbose=verbose=='perturb')
                 else:
                     mod0 = self.initMod.reset()
                     if verbose == True:
@@ -56,7 +56,7 @@ class Point(object):
                 misfit0,chiSqr0,L0 = self.misfit(mod0)
                 mod0._dump(i,mcTrack,[misfit0,L0,1])
             else:
-                mod1 = mod0.perturb(isgood)
+                mod1 = mod0.perturb(isgood,verbose=verbose=='perturb')
                 if debug:
                     plt.figure()
                     T = self.obs['T']

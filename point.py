@@ -32,9 +32,10 @@ class Point(object):
     def MCinv(self,outdir='MCtest',pid=None,runN=50000,step4uwalk=1000,init=True,
               seed=None,verbose=False,priori=False,isgood=None):
         def accept(chiSqr0,chiSqr1):
+            rand = random.random()
             if chiSqr1 < chiSqr0: # avoid overflow
                 return True
-            return random.random() > 1-np.exp(-(chiSqr1-chiSqr0)/2) # (L0-L1)/L0
+            return rand > 1-np.exp(-(chiSqr1-chiSqr0)/2) # (L0-L1)/L0
         if isgood is None:
             def isgood(model):
                 return model.isgood()

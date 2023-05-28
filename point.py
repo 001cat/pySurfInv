@@ -86,10 +86,10 @@ class Point(object):
         else:
             return mod1
     def MCinvMP(self,outdir='MCtest',pid=None,runN=50000,step4uwalk=1000,nprocess=12,seed=42,priori=False,isgood=None,
-                verbose=True,waitingForSaving=3):
+                verbose=True):
         if priori and outdir.split('_')[-1] != 'priori':
             outdir = '_'.join((outdir,'priori'))
-        tmpDir = 'MCtmp'+randString(10)
+        random.seed(None); tmpDir = 'MCtmp'+randString(10)
         random.seed(seed); seed = random.random()
         pid = self.pid if pid is None else pid
 
@@ -104,8 +104,8 @@ class Point(object):
         pool.close()
         pool.join()
         
-        while (time.time() - timeStamp) < waitingForSaving:
-            time.sleep(0.5)
+        # while (time.time() - timeStamp) < waitingForSaving:
+        #     time.sleep(0.5)
 
         subMCLst = []
         for argIn in argInLst:

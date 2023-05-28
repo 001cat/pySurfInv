@@ -32,10 +32,9 @@ class Point(object):
     def MCinv(self,outdir='MCtest',pid=None,runN=50000,step4uwalk=1000,init=True,
               seed=None,verbose=False,priori=False,isgood=None):
         def accept(chiSqr0,chiSqr1):
-            rand = random.random()
             if chiSqr1 < chiSqr0: # avoid overflow
                 return True
-            return rand > 1-np.exp(-(chiSqr1-chiSqr0)/2) # (L0-L1)/L0
+            return random.random() > 1-np.exp(-(chiSqr1-chiSqr0)/2) # (L0-L1)/L0
         if isgood is None:
             def isgood(model):
                 return model.isgood()
@@ -86,7 +85,7 @@ class Point(object):
             print(f'Step {pid.split("_")[1]} Time cost:{time.time()-timeStamp:.2f} ')
         else:
             return mod1
-    def MCinvMP(self,outdir='MCtest',pid=None,runN=50000,step4uwalk=1000,nprocess=12,seed=None,priori=False,isgood=None,
+    def MCinvMP(self,outdir='MCtest',pid=None,runN=50000,step4uwalk=1000,nprocess=12,seed=42,priori=False,isgood=None,
                 verbose=True):
         if priori and outdir.split('_')[-1] != 'priori':
             outdir = '_'.join((outdir,'priori'))
@@ -170,12 +169,12 @@ class PostPoint(Point):
             self.MCparas = self.MC[:,3:]
             self.MCparas_pri = None
 
-            # if trueMarkovChain:
-            #     for i in range(self.N):
-            #         if self.accepts[i]:
-            #             iAcc = i
-            #         else:
-            #             self.MCparas[i,:] = self.MCparas[iAcc,:]
+            if trueMarkovChain:
+                for i in range(self.N):
+                    if self.accepts[i]:
+                        iAcc = i
+                    else:
+                        self.MCparas[i,:] = self.MCparas[iAcc,:]
 
             indMin = np.nanargmin(self.misfits)
             self.minMod         = self.initMod.copy()
@@ -245,52 +244,6 @@ class PostPoint(Point):
                 plt.hist(accYs[i],bins=30)
             plt.title(title)
             
-        return
-
-        plt.figure()
-        y = self.MCparas_pri[:,ind]
-        _,bin_edges = np.histogram(y,bins=30)
-        y = self.MCparas[self.accFinal,ind]
-        plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)))
-        y = self.MCparas_pri[:,ind]
-        plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)),
-                    fill=False,ec='k',rwidth=1.0)
-        plt.title(f'N = {self.accFinal.sum()}/{len(self.accFinal)}')
-
-        
-        
-        
-        
-        
-        if zdeps is not None:
-            mod = self.initMod.copy()
-            accMods = [loadMC(mod,mc) for mc in self.MCparas[self.accFinal]]
-            accVs   = np.array([mod.value(zdeps) for mod in tqdm.tqdm(accMods)])
-            priMods = [loadMC(mod,mc) for mc in self.MCparas_pri[:]]
-            priVs   = np.array([mod.value(zdeps) for mod in tqdm.tqdm(priMods)])
-            for i,z in enumerate(zdeps):
-                plt.figure()
-                _,bin_edges = np.histogram(priVs[:,i],bins=30)
-                y = accVs[:,i]
-                plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)))
-                y = priVs[:,i]
-                plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)),
-                            fill=False,ec='k',rwidth=1.0)
-                plt.title(f'Hist of Vs at {z} km')
-            return
-        else:
-            if inds == 'all':
-                inds = range(len(self.initMod._brownians()))
-            for ind in inds:
-                plt.figure()
-                y = self.MCparas_pri[:,ind]
-                _,bin_edges = np.histogram(y,bins=30)
-                y = self.MCparas[self.accFinal,ind]
-                plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)))
-                y = self.MCparas_pri[:,ind]
-                plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)),
-                            fill=False,ec='k',rwidth=1.0)
-                plt.title(f'N = {self.accFinal.sum()}/{len(self.accFinal)}')
     def plotVsProfile(self,allAccepted=False):
         ax = self.initMod.plotProfile(label='Initial')
         mod = self.avgMod.copy()

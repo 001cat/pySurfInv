@@ -217,36 +217,6 @@ class PostPoint(Point):
         plt.legend()
         plt.title('Dispersion')
         return plt.gcf(),plt.gca()
-    def plotDistrib(self,inds='all',zdeps=None):
-        def loadMC(mod,mc):
-            mod._loadMC(mc)
-            return mod.copy()
-        if zdeps is not None:
-            mod = self.initMod.copy()
-            accMods = [loadMC(mod,mc) for mc in self.MCparas[self.accFinal]]
-            accYs   = np.array([mod.value(zdeps) for mod in tqdm.tqdm(accMods)]).T
-            if self.MCparas_pri is not None:
-                priMods = [loadMC(mod,mc) for mc in self.MCparas_pri[:]]
-                priYs   = np.array([mod.value(zdeps) for mod in tqdm.tqdm(priMods)]).T
-            titles = [f'Hist of Vs at {z} km' for z in zdeps]
-        else:
-            inds = range(len(self.initMod._brownians())) if inds == 'all' else inds
-            accYs = [self.MCparas[self.accFinal,ind] for ind in inds]
-            if self.MCparas_pri is not None:
-                priYs = [self.MCparas_pri[:,ind] for ind in inds]
-            titles = [f'Parameter index {ind}: {self.accFinal.sum()}/{len(self.accFinal)}' for ind in inds]
-
-        for i,title in enumerate(titles):
-            plt.figure()
-            if self.MCparas_pri is not None:
-                _,bin_edges = np.histogram(priYs[i],bins=30)
-                plt.hist(accYs[i],bins=bin_edges,weights=np.ones_like(accYs[i])/float(len(accYs[i])))
-                plt.hist(priYs[i],bins=bin_edges,weights=np.ones_like(priYs[i])/float(len(priYs[i])),
-                            fill=False,ec='k',rwidth=1.0)
-            else:
-                plt.hist(accYs[i],bins=30)
-            plt.title(title)
-            
     def plotVsProfile(self,allAccepted=False):
         ax = self.initMod.plotProfile(label='Initial')
         mod = self.avgMod.copy()
@@ -276,6 +246,48 @@ class PostPoint(Point):
         plt.legend()
         return ax
     
+    def plotDistrib(self,inds='all',zdeps=None):
+        def loadMC(mod,mc):
+            mod._loadMC(mc)
+            return mod.copy()
+        if zdeps is not None:
+            mod = self.initMod.copy()
+            accMods = [loadMC(mod,mc) for mc in self.MCparas[self.accFinal]]
+            accYs   = np.array([mod.value(zdeps) for mod in tqdm.tqdm(accMods)]).T
+            if self.MCparas_pri is not None:
+                priMods = [loadMC(mod,mc) for mc in self.MCparas_pri[:]]
+                priYs   = np.array([mod.value(zdeps) for mod in tqdm.tqdm(priMods)]).T
+            titles = [f'Hist of Vs at {z} km' for z in zdeps]
+        else:
+            inds = range(len(self.initMod._brownians())) if inds == 'all' else inds
+            accYs = [self.MCparas[self.accFinal,ind] for ind in inds]
+            if self.MCparas_pri is not None:
+                priYs = [self.MCparas_pri[:,ind] for ind in inds]
+            titles = [f'Parameter index {ind}: {self.accFinal.sum()}/{len(self.accFinal)}' for ind in inds]
+
+        for i,title in enumerate(titles):
+            plt.figure()
+            if self.MCparas_pri is not None:
+                _,bin_edges = np.histogram(priYs[i],bins=30)
+                plt.hist(accYs[i],bins=bin_edges,weights=np.ones_like(accYs[i])/float(len(accYs[i])))
+                plt.hist(priYs[i],bins=bin_edges,weights=np.ones_like(priYs[i])/float(len(priYs[i])),
+                            fill=False,ec='k',rwidth=1.0)
+            else:
+                plt.hist(accYs[i],bins=30)
+            plt.title(title)
+    def _model1D_generator(self,N=None,isRandom=True,accFinal=True):
+        inds_pool = np.where(self.accFinal)[0] if accFinal else range(self.N)
+        N = self.N if N is None else N
+        if isRandom:
+            inds = [random.choice(inds_pool) for _ in range(N)]
+        else:
+            inds = inds_pool[:N]
+
+        mod = self.initMod.copy()
+        for ind in inds:
+            mod._loadMC(self.MCparas[ind,:])
+            yield mod
+
     # in testing
     def _check(self,step4uwalk=1000):
         from scipy.ndimage import uniform_filter1d
@@ -325,19 +337,7 @@ class PostPoint(Point):
 
         rates = np.array(rates); localMins = np.array(localMins); localThres = np.array(localThres)
         print((rates > localThres-localMins).sum())
-    def _mod_generator(self,N=None,isRandom=True,accFinal=True):
-        inds_pool = np.where(self.accFinal)[0] if accFinal else range(self.N)
-        N = self.N if N is None else N
-        if isRandom:
-            inds = [random.choice(inds_pool) for _ in range(N)]
-        else:
-            inds = inds_pool[:N]
-
-        mod = self.initMod.copy()
-        for ind in inds:
-            mod._loadMC(self.MCparas[ind,:])
-            yield mod
-
+    
     # not used now
     def plotVsProfileStd(self):
         indFinAcc = np.where(self.accFinal)[0]

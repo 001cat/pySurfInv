@@ -1,7 +1,7 @@
 import random,time,os,tqdm
 import numpy as np
 import multiprocessing as mp
-from pySurfInv.models import buildModel1D
+from pySurfInv.models import buildModel1D,MCinv
 from Triforce.pltHead import *
 from Triforce.obspyPlus import randString
 
@@ -127,38 +127,10 @@ class Point(object):
         from copy import deepcopy
         return deepcopy(self)
 
-class PointCascadia(Point):
-    def misfit(self,model=None):
-        if model is None:
-            model = self.initMod
-        T = np.array(self.obs['T'])
-        cP = model.forward(periods=T)
-        if cP is None:
-            return 88888,88888,0
-        cO = self.obs['c']
-        if not np.ma.isMaskedArray(cO):
-            cO = np.ma.masked_array(cO)
-        uncer = self.obs['uncer']
 
-        N = cO.count()
-        # chiSqr = (((cO - cP)/uncer)**2).sum()
-        bias = (cO - cP)/uncer
-        bias1 = bias[T<=40]
-        bias2 = bias[T>40]
-        if not np.all(bias1.mask) and not np.all(bias2.mask):
-            chiSqr = ((bias1**2).mean() + (bias2**2).mean())/2*N
-        elif np.all(bias1.mask) and not np.all(bias2.mask):
-            chiSqr = (bias2**2).mean()*N
-        elif not np.all(bias1.mask) and np.all(bias2.mask):
-            chiSqr = (bias1**2).mean()*N
-        else:
-            raise ValueError('All observations are masked???')
-
-        misfit = np.sqrt(chiSqr/N)
-        chiSqr =  chiSqr if chiSqr < 50 else np.sqrt(chiSqr*50.) 
-        L = np.exp(-0.5 * chiSqr)
-        return misfit,chiSqr,L
-
+def _foo_mod_value(varIn):
+    mod,zdeps,i = varIn
+    return (i,mod.value(zdeps))
 class PostPoint(Point):
     def __init__(self,npzMC=None,npzPriori=None,
                  modelTypeCustom=None,layerClassCustom={},
@@ -201,9 +173,6 @@ class PostPoint(Point):
         if npzPriori is not None:
             tmp = np.load(npzPriori,allow_pickle=True)['mcTrack']
             self.MCparas_pri = tmp[:,3:]
-    @staticmethod
-    def _thres(minMisfit):
-        return max(minMisfit*2, minMisfit+0.5)
 
     def plotDisp(self,ax=None,ensemble=True):
         T,vel,uncer = self.obs['T'],self.obs['c'],\
@@ -212,13 +181,11 @@ class PostPoint(Point):
             plt.figure()
         else:
             plt.axes(ax)
-        mod = self.avgMod.copy()
-        indFinAcc = np.where(self.accFinal)[0]
+        
         if ensemble:
-            for _ in range(min(len(indFinAcc),500)):
-                i = random.choice(indFinAcc)
-                mod._loadMC(self.MCparas[i,:])
-                plt.plot(T,mod.forward(T),color='grey',lw=0.1)
+            for mod in self._model_generator(random.choices(np.where(self.accFinal)[0],k=500)):
+                plt.plot(T,mod.forward(T),color='grey',lw=0.1,alpha=0.2)
+
         plt.errorbar(T,vel,uncer,ls='None',color='k',capsize=3,capthick=2,elinewidth=2,label='Observation')
         plt.plot(T,self.initMod.forward(T),label='Initial')
         plt.plot(T,self.avgMod.forward(T),label='Avg accepted')
@@ -226,15 +193,11 @@ class PostPoint(Point):
         plt.legend()
         plt.title('Dispersion')
         return plt.gcf(),plt.gca()
-
     def plotVsProfile(self,allAccepted=False):
         ax = self.initMod.plotProfile(label='Initial')
-        mod = self.avgMod.copy()
-        indFinAcc = np.where(self.accFinal)[0]
-        for i in range(min(len(indFinAcc),(self.N if allAccepted else 2000))):
-            ind = indFinAcc[i] if allAccepted else random.choice(indFinAcc)
-            mod._loadMC(self.MCparas[ind,:])
-            mod.plotProfile(ax=ax,color='grey',lw=0.1)
+        k = self.N if allAccepted else 2000
+        for mod in self._model_generator(random.choices(np.where(self.accFinal)[0],k=k)):
+            mod.plotProfile(ax=ax,color='grey',lw=0.1,alpha=0.2)
         self.avgMod.plotProfile(ax=ax,label='Avg')
         self.minMod.plotProfile(ax=ax,label='Min')
         plt.xlim(3.8,4.8)
@@ -242,14 +205,9 @@ class PostPoint(Point):
         return ax
     def plotVsProfileGrid(self,allAccepted=False,ax=None):
         ax = self.initMod.plotProfileGrid(label='Initial',ax=ax)
-        # if ax is None:
-        #     fig.set_figheight(8.4);fig.set_figwidth(5)
-        mod = self.avgMod.copy()
-        indFinAcc = np.where(self.accFinal)[0]
-        for i in range(min(len(indFinAcc),(self.N if allAccepted else 500))):
-            ind = indFinAcc[i] if allAccepted else random.choice(indFinAcc)
-            mod._loadMC(self.MCparas[ind,:])
-            mod.plotProfileGrid(color='grey',ax=ax,lw=0.1)
+        k = self.N if allAccepted else 2000
+        for mod in self._model_generator(random.choices(np.where(self.accFinal)[0],k=k)):
+            mod.plotProfileGrid(ax=ax,color='grey',lw=0.1,alpha=0.2)
         self.avgMod.plotProfileGrid(label='Avg',ax=ax)
         self.minMod.plotProfileGrid(label='Min',ax=ax)
         plt.xlim(3.0,4.8)
@@ -258,14 +216,7 @@ class PostPoint(Point):
     def plotVsProfileShaded(self):
         indFinAcc = np.where(self.accFinal)[0]
         zdeps = np.linspace(0,200,200)
-        # zdeps = postp.avgMod.seisPropGrids()[0]
-        allVs = np.zeros([len(zdeps),len(indFinAcc)])
-
-        mod = self.avgMod.copy()
-        for i,ind in enumerate(indFinAcc):
-            mod._loadMC(self.MCparas[ind,:])
-            allVs[:,i] = mod.value(zdeps)
-        std = allVs.std(axis=1)
+        std = self._loadValues(zdeps=zdeps).std(axis=1)
 
         ax = self.initMod.plotProfileGrid(label='Initial',alpha=0.2)
         plt.axes(ax); fig = plt.gcf()
@@ -277,24 +228,13 @@ class PostPoint(Point):
         plt.legend()
 
     def _check_distribution(self,indVars='all',zdeps=None):
-        def loadMC(mod,mc):
-            mod._loadMC(mc)
-            return mod.copy()
-        if zdeps is not None:
-            mod = self.initMod.copy()
-            accMods = [loadMC(mod,mc) for mc in self.MCparas[self.accFinal]]
-            accYs   = np.array([mod.value(zdeps) for mod in tqdm.tqdm(accMods)]).T
-            if self.MCparas_pri is not None:
-                priMods = [loadMC(mod,mc) for mc in self.MCparas_pri[:]]
-                priYs   = np.array([mod.value(zdeps) for mod in tqdm.tqdm(priMods)]).T
-            titles = [f'Hist of Vs at {z} km' for z in zdeps]
-        else:
-            indVars = range(len(self.initMod._brownians())) if indVars == 'all' else indVars
-            accYs = [self.MCparas[self.accFinal,ind] for ind in indVars]
-            if self.MCparas_pri is not None:
-                priYs = [self.MCparas_pri[:,ind] for ind in indVars]
-            titles = [f'Parameter index {ind}: {self.accFinal.sum()}/{len(self.accFinal)}' for ind in indVars]
+        accYs = self._loadValues(indVars,zdeps,priori=False)
+        priYs = self._loadValues(indVars,zdeps,priori=True)
 
+        indVars = range(len(self.initMod._brownians())) if indVars == 'all' else indVars
+        titles = [f'Parameter index {ind}: {self.accFinal.sum()}/{len(self.accFinal)}' for ind in indVars] \
+                 if zdeps is None else [f'Hist of Vs at {z} km' for z in zdeps]
+        
         for i,title in enumerate(titles):
             plt.figure()
             if self.MCparas_pri is not None:
@@ -306,43 +246,45 @@ class PostPoint(Point):
             else:
                 plt.hist(accYs[i],bins=30)
             plt.title(title)
-    def _check_convergency(self,indVars='all',showVarsSpace=False):
+    def _check_convergency(self,indVars='all',zdeps=None,showVarsSpace=False):
         chainL = self.invMeta['chainL']
-        indVars = np.arange(len(self.initMod._brownians())) if indVars == 'all' else indVars
         chainLTests = [int(l) for l in np.linspace(chainL/10,chainL,20)]
-        yMean = np.zeros([len(indVars),len(chainLTests)])
-        yStd  = np.zeros([len(indVars),len(chainLTests)])
         def indChainLTest(chainLTest):
             N = len(self.misfits); iStart = 0
-            indices = np.zeros(N,dtype=bool)
+            indSteps = np.zeros(N,dtype=bool)
             while iStart < N:
-                indices[iStart:iStart+chainLTest] = True
+                indSteps[iStart:iStart+chainLTest] = True
                 iStart += chainL
-            return indices
+            return indSteps
+        
+        indVars = range(len(self.initMod._brownians())) if indVars == 'all' else indVars
+        nVars = len(indVars) if zdeps is None else len(zdeps)
+        
+        yMean = np.zeros([nVars,len(chainLTests)])
+        yStd  = np.zeros([nVars,len(chainLTests)])
         for j,chainLTest in enumerate(chainLTests):
             indSteps = indChainLTest(chainLTest)
             thres = self._thres(self.misfits[indSteps].min())
-            accInd = (self.misfits<thres) * indSteps
-            for i,indVar in enumerate(indVars):
-                yMean[i,j] = np.mean(self.MCparas[accInd,indVar])
-                yStd[i,j]  = np.std(self.MCparas[accInd,indVar])
-        
-        varLabels = [f'{i}: {b[1]}-{b[2]}' for i,b in enumerate(self.initMod._brownians(False))]
-        varMins   = [b[0].vmin for b in self.initMod._brownians(False)]
-        varMaxs   = [b[0].vmax for b in self.initMod._brownians(False)]
+            accInd = np.where((self.misfits<thres) * indSteps)[0]
+            values = self._loadValues(indVars,zdeps,accInd)
+            yMean[:,j] = values.mean(axis=1)
+            yStd[:,j]  = values.std(axis=1)
+
+        varLabels = np.array([f'{i}: {b[1]}-{b[2]}' for i,b in enumerate(self.initMod._brownians(False))])[indVars] \
+                    if zdeps is None else [f'{z} km' for z in zdeps]
+        varMins   = np.array([b[0].vmin for b in self.initMod._brownians(False)])[indVars]
+        varMaxs   = np.array([b[0].vmax for b in self.initMod._brownians(False)])[indVars]
 
         plt.figure()
-        for i,indVar in enumerate(indVars):
-            ymin,ymax = varMins[indVar],varMaxs[indVar]
-            plt.plot(chainLTests,yMean[i],label=varLabels[indVar])
-            if showVarsSpace:
-                plt.fill_between(chainLTests,ymin,ymax,alpha=0.1)
-
+        for i in range(nVars):
+            plt.plot(chainLTests,yMean[i],label=varLabels[i])
+            if showVarsSpace and zdeps is None:
+                plt.fill_between(chainLTests,varMins[i],varMaxs[i],alpha=0.1)
         plt.legend(); plt.title('Mean')
 
         plt.figure()
-        for i,indVar in enumerate(indVars):
-            plt.plot(chainLTests,yStd[i],label=varLabels[indVar])
+        for i in range(nVars):
+            plt.plot(chainLTests,yStd[i],label=varLabels[i])
         plt.legend(); plt.title('Standard Deviation')
     def _check_history(self,yType='ksquare'):
         plt.figure()
@@ -361,73 +303,122 @@ class PostPoint(Point):
         if thres:
             plt.plot([0,self.N],[thres,thres],'--g')
  
-    # Unused
-    def _model1D_generator(self,N=None,isRandom=True,accFinal=True):
-        inds_pool = np.where(self.accFinal)[0] if accFinal else range(self.N)
-        N = self.N if N is None else N
-        if isRandom:
-            inds = [random.choice(inds_pool) for _ in range(N)]
-        else:
-            inds = inds_pool[:N]
-
+    # miscellaneous
+    @staticmethod
+    def _thres(minMisfit):
+        return max(minMisfit*2, minMisfit+0.5)
+    def _model_generator(self,indSteps=None,priori=False) -> MCinv:
         mod = self.initMod.copy()
-        for ind in inds:
-            mod._loadMC(self.MCparas[ind,:])
-            yield mod
+        indSteps = indSteps if indSteps is not None else (np.where(self.accFinal)[0] if not priori else range(len(self.misfits)))
+        mcParas = self.MCparas if not priori else self.MCparas_pri
+        for ind in indSteps:
+            mod._loadMC(mcParas[ind,:])
+            yield mod.copy()
+    def _loadValues(self,indVars='all',zdeps=None,indSteps=None,priori=False):
+        if zdeps is not None:
+            varIns = [(mod,zdeps,i) for i,mod in enumerate(self._model_generator(indSteps,priori=priori))]
+            from multiprocessing import Pool
+            pool = Pool(20)
+            values = pool.map(_foo_mod_value, varIns)
+            pool.close()
+            pool.join()
+            values.sort(key=lambda x: x[0])
+            return np.array([v[1] for v in values]).T
+            # values = np.array([mod.value(zdeps) for mod in self._model_generator(indSteps,priori=priori)])
+        else:
+            indVars = range(len(self.initMod._brownians())) if indVars == 'all' else indVars
+            mcParas = self.MCparas[self.accFinal] if not priori else self.MCparas_pri[self.accFinal]
+            values = np.array([mc[indVars] for mc in mcParas]).T
+        return values
 
+
+
+class PointCascadia(Point):
+    def misfit(self,model=None):
+        if model is None:
+            model = self.initMod
+        T = np.array(self.obs['T'])
+        cP = model.forward(periods=T)
+        if cP is None:
+            return 88888,88888,0
+        cO = self.obs['c']
+        if not np.ma.isMaskedArray(cO):
+            cO = np.ma.masked_array(cO)
+        uncer = self.obs['uncer']
+
+        N = cO.count()
+        # chiSqr = (((cO - cP)/uncer)**2).sum()
+        bias = (cO - cP)/uncer
+        bias1 = bias[T<=40]
+        bias2 = bias[T>40]
+        if not np.all(bias1.mask) and not np.all(bias2.mask):
+            chiSqr = ((bias1**2).mean() + (bias2**2).mean())/2*N
+        elif np.all(bias1.mask) and not np.all(bias2.mask):
+            chiSqr = (bias2**2).mean()*N
+        elif not np.all(bias1.mask) and np.all(bias2.mask):
+            chiSqr = (bias1**2).mean()*N
+        else:
+            raise ValueError('All observations are masked???')
+
+        misfit = np.sqrt(chiSqr/N)
+        chiSqr =  chiSqr if chiSqr < 50 else np.sqrt(chiSqr*50.) 
+        L = np.exp(-0.5 * chiSqr)
+        return misfit,chiSqr,L
 
 class PostPointCascadia(PostPoint):
     misfit = PointCascadia.misfit
 
+
 if __name__ == '__main__':
-    setting = {
-        'OceanWater'            : {'H':2},
-        'OceanSedimentCascadia' : {'H':[1,'rel_pos',100,0.1]},
-        'OceanCrust'            : {'H':7, 'Vs':[3.25, 3.94]},
-        'OceanMantleHybrid'     : {'BottomDepth':200, 
-                                   'Conversion':'Ritzwoller',
-                                   'ThermAge':[4,'rel_pos',200,0.4],
-                                   'Vs': [[0, 'abs', 0.4, 0.01],
-                                          [0, 'abs', 0.4, 0.01],
-                                          [0, 'abs', 0.4, 0.01],
-                                          [0, 'abs', 0.2, 0.01]]
-                                   },
-        'Info':{
-            'modelType' : 'CascadiaOcean',
-            'period'    : 10,
-            'refLayer'  : True,
-            'lithoAgeQ' : True
-        }
-    }
+    # setting = {
+    #     'OceanWater'            : {'H':2},
+    #     'OceanSedimentCascadia' : {'H':[1,'rel_pos',100,0.1]},
+    #     'OceanCrust'            : {'H':7, 'Vs':[3.25, 3.94]},
+    #     'OceanMantleHybrid'     : {'BottomDepth':200, 
+    #                                'Conversion':'Ritzwoller',
+    #                                'ThermAge':[4,'rel_pos',200,0.4],
+    #                                'Vs': [[0, 'abs', 0.4, 0.01],
+    #                                       [0, 'abs', 0.4, 0.01],
+    #                                       [0, 'abs', 0.4, 0.01],
+    #                                       [0, 'abs', 0.2, 0.01]]
+    #                                },
+    #     'Info':{
+    #         'modelType' : 'CascadiaOcean',
+    #         'period'    : 10,
+    #         'refLayer'  : True,
+    #         'lithoAgeQ' : True
+    #     }
+    # }
 
-    p = PointCascadia(setting,localInfo={
-        'topo':-2.567706,
-        'lithoAge':0.6,
-        'sedthk':0.019,
-        'mantleInitParmVs':[-0.3426920324186606,-0.1863907997418917,
-                            -0.1882828662382096,-0.05648363217566826]
-        },
-        periods = [10,12,14,16,18,20,22,24,26,28,30,32,36,40,50,60,70,80],
-        vels    = [3.5724066175576223, 3.6222019289297043, 3.6520621581430763, 3.6588731735179367,
-                   3.673255450218663,  3.683443600610537,  3.6844591498161896, 3.689993791502759,
-                   3.6935745493241487, 3.696092260762209,  3.707185398688356,  3.7148258328900985,
-                   3.7209668755498257, 3.7486729577980427, 3.7706463827824748, 3.82144353111797,
-                   3.8603954933518914, 3.9030011211762767],
-        uncers  = [0.006550350458769691, 0.005, 0.005, 0.005,
-                   0.005, 0.005, 0.005, 0.005, 
-                   0.005, 0.005, 0.005, 0.005499996722895128, 
-                   0.00751713560920708, 0.007910350806141024, 0.007711019920661203, 0.010152973423528881,
-                   0.01062776863809981, 0.015829560954127662]
-        )
-    p.MCinvMP(f'test',pid='test',runN=24000,chainL=800,nprocess=20)
-    p.MCinvMP(f'test_priori',pid='test',runN=24000,chainL=800,nprocess=20,priori=True)
+    # p = PointCascadia(setting,localInfo={
+    #     'topo':-2.567706,
+    #     'lithoAge':0.6,
+    #     'sedthk':0.019,
+    #     'mantleInitParmVs':[-0.3426920324186606,-0.1863907997418917,
+    #                         -0.1882828662382096,-0.05648363217566826]
+    #     },
+    #     periods = [10,12,14,16,18,20,22,24,26,28,30,32,36,40,50,60,70,80],
+    #     vels    = [3.5724066175576223, 3.6222019289297043, 3.6520621581430763, 3.6588731735179367,
+    #                3.673255450218663,  3.683443600610537,  3.6844591498161896, 3.689993791502759,
+    #                3.6935745493241487, 3.696092260762209,  3.707185398688356,  3.7148258328900985,
+    #                3.7209668755498257, 3.7486729577980427, 3.7706463827824748, 3.82144353111797,
+    #                3.8603954933518914, 3.9030011211762767],
+    #     uncers  = [0.006550350458769691, 0.005, 0.005, 0.005,
+    #                0.005, 0.005, 0.005, 0.005, 
+    #                0.005, 0.005, 0.005, 0.005499996722895128, 
+    #                0.00751713560920708, 0.007910350806141024, 0.007711019920661203, 0.010152973423528881,
+    #                0.01062776863809981, 0.015829560954127662]
+    #     )
+    # p.MCinvMP(f'test',pid='test',runN=24000,chainL=800,nprocess=20)
+    # p.MCinvMP(f'test_priori',pid='test',runN=24000,chainL=800,nprocess=20,priori=True)
 
-    # postp = PostPointCascadia('test/test.npz','test_priori/test.npz')
+    postp = PostPointCascadia('test/test.npz','test_priori/test.npz')
     # postp.plotDisp()
     # postp.plotVsProfileGrid()
     # postp.plotVsProfileShaded()
-    # postp._check_distribution([1])
-    # postp._check_convergency(indVars=[1,3])
+    # postp._check_distribution(zdeps=[50])
+    # postp._check_convergency(zdeps=[50])
+    # postp._check_convergency(indVars=[1])
     # postp._check_history()
 
     pass

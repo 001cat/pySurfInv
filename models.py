@@ -244,12 +244,12 @@ class MCinv(Model1D):
                 if type(v) is list:
                     for e in v:
                         if isinstance(e,BrownianVar):
-                            brownians.append([float(e),layer.prop['Group'],k])
+                            brownians.append([e,layer.prop['Group'],k])
                 else:
                     if isinstance(v,BrownianVar):
-                        brownians.append([float(v),layer.prop['Group'],k])
+                        brownians.append([v,layer.prop['Group'],k])
         if numberOnly:
-            brownians = [v[0] for v in brownians]
+            brownians = [float(v[0]) for v in brownians]
         return brownians
     def _dump(self,index,target,preInfo=[]):
         preInfo.extend(self._brownians())

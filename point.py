@@ -29,7 +29,7 @@ class Point(object):
         chiSqr =  chiSqr if chiSqr < 50 else np.sqrt(chiSqr*50.) 
         L = np.exp(-0.5 * chiSqr)
         return misfit,chiSqr,L
-    def MCinv(self,outdir='MCtest',pid=None,runN=50000,step4uwalk=1000,init=True,
+    def MCinv(self,outdir='MCtest',pid=None,runN=50000,chainL=1000,init=True,
               seed=None,verbose=False,priori=False,isgood=None):
         def accept(chiSqr0,chiSqr1):
             if chiSqr1 < chiSqr0: # avoid overflow
@@ -44,7 +44,7 @@ class Point(object):
         timeStamp = time.time()
         mcTrack = [0]*runN
         for i in range(runN):
-            if i % step4uwalk == 0:
+            if i % chainL == 0:
                 if init:
                     mod0 = self.initMod.copy();init=False
                     if not isgood(mod0):
@@ -80,12 +80,14 @@ class Point(object):
         mcTrack = np.array(mcTrack)
         os.makedirs(outdir,exist_ok=True)
         np.savez_compressed(f'{outdir}/{pid}.npz',mcTrack=mcTrack,
-                            setting=dict(self.initMod.toYML()),obs=self.obs,pid=pid)
+                            setting=dict(self.initMod.toYML()),obs=self.obs,invMeta={
+                                'pid':pid, 'chainL':chainL
+                                })
         if verbose == 'mp':
             print(f'Step {pid.split("_")[1]} Time cost:{time.time()-timeStamp:.2f} ')
         else:
             return mod1
-    def MCinvMP(self,outdir='MCtest',pid=None,runN=50000,step4uwalk=1000,nprocess=12,seed=42,priori=False,isgood=None,
+    def MCinvMP(self,outdir='MCtest',pid=None,runN=50000,chainL=1000,nprocess=12,seed=42,priori=False,isgood=None,
                 verbose=True):
         if priori and outdir.split('_')[-1] != 'priori':
             outdir = '_'.join((outdir,'priori'))
@@ -96,8 +98,8 @@ class Point(object):
         if verbose:
             print(f'Running MC inversion: {pid}')
 
-        argInLst = [ [tmpDir,f'tmp_{i:03d}_{pid}',step4uwalk,step4uwalk,i==0,seed+i,
-                      'mp' if verbose else False,priori,isgood] for i in range(runN//step4uwalk)]
+        argInLst = [ [tmpDir,f'tmp_{i:03d}_{pid}',chainL,chainL,i==0,seed+i,
+                      'mp' if verbose else False,priori,isgood] for i in range(runN//chainL)]
         timeStamp = time.time()
         pool = mp.Pool(processes=nprocess)
         pool.starmap(self.MCinv, argInLst)
@@ -116,7 +118,9 @@ class Point(object):
         mcTrack = np.concatenate(subMCLst,axis=0)
         os.makedirs(outdir,exist_ok=True)
         np.savez_compressed(f'{outdir}/{pid}.npz',mcTrack=mcTrack,
-                            setting=dict(self.initMod.toYML()),obs=self.obs,pid=pid)
+                            setting=dict(self.initMod.toYML()),obs=self.obs,invMeta={
+                                'pid':pid, 'chainL':chainL
+                                })
         if verbose:
             print(f'Time cost:{time.time()-timeStamp:.2f} ')
     def copy(self):
@@ -162,6 +166,7 @@ class PostPoint(Point):
         if npzMC is not None:
             tmp = np.load(npzMC,allow_pickle=True)
             self.MC,setting,self.obs = tmp['mcTrack'],tmp['setting'][()],tmp['obs'][()]
+            self.invMeta = tmp['invMeta'][()]
             self.initMod = buildModel1D(setting,modelTypeCustom=modelTypeCustom,
                                         layerClassCustom=layerClassCustom)
                 
@@ -185,7 +190,7 @@ class PostPoint(Point):
             self.minMod.L       = self.Ls[indMin]
             self.minMod.misfit  = self.misfits[indMin]
 
-            self.thres  = max(self.minMod.misfit*2, self.minMod.misfit+0.5)
+            self.thres  = self._thres(self.minMod.misfit)
             self.accFinal = (self.misfits < self.thres)
 
             self.avgMod         = self.initMod.copy()
@@ -196,6 +201,10 @@ class PostPoint(Point):
         if npzPriori is not None:
             tmp = np.load(npzPriori,allow_pickle=True)['mcTrack']
             self.MCparas_pri = tmp[:,3:]
+    @staticmethod
+    def _thres(minMisfit):
+        return max(minMisfit*2, minMisfit+0.5)
+
     def plotDisp(self,ax=None,ensemble=True):
         T,vel,uncer = self.obs['T'],self.obs['c'],\
                       self.obs['uncer']
@@ -217,6 +226,7 @@ class PostPoint(Point):
         plt.legend()
         plt.title('Dispersion')
         return plt.gcf(),plt.gca()
+
     def plotVsProfile(self,allAccepted=False):
         ax = self.initMod.plotProfile(label='Initial')
         mod = self.avgMod.copy()
@@ -245,8 +255,28 @@ class PostPoint(Point):
         plt.xlim(3.0,4.8)
         plt.legend()
         return ax
-    
-    def plotDistrib(self,inds='all',zdeps=None):
+    def plotVsProfileShaded(self):
+        indFinAcc = np.where(self.accFinal)[0]
+        zdeps = np.linspace(0,200,200)
+        # zdeps = postp.avgMod.seisPropGrids()[0]
+        allVs = np.zeros([len(zdeps),len(indFinAcc)])
+
+        mod = self.avgMod.copy()
+        for i,ind in enumerate(indFinAcc):
+            mod._loadMC(self.MCparas[ind,:])
+            allVs[:,i] = mod.value(zdeps)
+        std = allVs.std(axis=1)
+
+        ax = self.initMod.plotProfileGrid(label='Initial',alpha=0.2)
+        plt.axes(ax); fig = plt.gcf()
+        fig.set_figheight(8.4);fig.set_figwidth(5)
+        avgProfile = self.avgMod.value(zdeps)
+        plt.fill_betweenx(zdeps,avgProfile+std,avgProfile-std,facecolor='grey',alpha=0.6)
+        self.avgMod.plotProfileGrid(ax=ax,label='Avg')
+        plt.xlim(3.0,4.8)
+        plt.legend()
+
+    def _check_distribution(self,indVars='all',zdeps=None):
         def loadMC(mod,mc):
             mod._loadMC(mc)
             return mod.copy()
@@ -259,22 +289,79 @@ class PostPoint(Point):
                 priYs   = np.array([mod.value(zdeps) for mod in tqdm.tqdm(priMods)]).T
             titles = [f'Hist of Vs at {z} km' for z in zdeps]
         else:
-            inds = range(len(self.initMod._brownians())) if inds == 'all' else inds
-            accYs = [self.MCparas[self.accFinal,ind] for ind in inds]
+            indVars = range(len(self.initMod._brownians())) if indVars == 'all' else indVars
+            accYs = [self.MCparas[self.accFinal,ind] for ind in indVars]
             if self.MCparas_pri is not None:
-                priYs = [self.MCparas_pri[:,ind] for ind in inds]
-            titles = [f'Parameter index {ind}: {self.accFinal.sum()}/{len(self.accFinal)}' for ind in inds]
+                priYs = [self.MCparas_pri[:,ind] for ind in indVars]
+            titles = [f'Parameter index {ind}: {self.accFinal.sum()}/{len(self.accFinal)}' for ind in indVars]
 
         for i,title in enumerate(titles):
             plt.figure()
             if self.MCparas_pri is not None:
                 _,bin_edges = np.histogram(priYs[i],bins=30)
-                plt.hist(accYs[i],bins=bin_edges,weights=np.ones_like(accYs[i])/float(len(accYs[i])))
+                plt.hist(accYs[i],bins=bin_edges,weights=np.ones_like(accYs[i])/float(len(accYs[i])),
+                            fill=True,ec='k',rwidth=0.8)
                 plt.hist(priYs[i],bins=bin_edges,weights=np.ones_like(priYs[i])/float(len(priYs[i])),
                             fill=False,ec='k',rwidth=1.0)
             else:
                 plt.hist(accYs[i],bins=30)
             plt.title(title)
+    def _check_convergency(self,indVars='all',showVarsSpace=False):
+        chainL = self.invMeta['chainL']
+        indVars = np.arange(len(self.initMod._brownians())) if indVars == 'all' else indVars
+        chainLTests = [int(l) for l in np.linspace(chainL/10,chainL,20)]
+        yMean = np.zeros([len(indVars),len(chainLTests)])
+        yStd  = np.zeros([len(indVars),len(chainLTests)])
+        def indChainLTest(chainLTest):
+            N = len(self.misfits); iStart = 0
+            indices = np.zeros(N,dtype=bool)
+            while iStart < N:
+                indices[iStart:iStart+chainLTest] = True
+                iStart += chainL
+            return indices
+        for j,chainLTest in enumerate(chainLTests):
+            indSteps = indChainLTest(chainLTest)
+            thres = self._thres(self.misfits[indSteps].min())
+            accInd = (self.misfits<thres) * indSteps
+            for i,indVar in enumerate(indVars):
+                yMean[i,j] = np.mean(self.MCparas[accInd,indVar])
+                yStd[i,j]  = np.std(self.MCparas[accInd,indVar])
+        
+        varLabels = [f'{i}: {b[1]}-{b[2]}' for i,b in enumerate(self.initMod._brownians(False))]
+        varMins   = [b[0].vmin for b in self.initMod._brownians(False)]
+        varMaxs   = [b[0].vmax for b in self.initMod._brownians(False)]
+
+        plt.figure()
+        for i,indVar in enumerate(indVars):
+            ymin,ymax = varMins[indVar],varMaxs[indVar]
+            plt.plot(chainLTests,yMean[i],label=varLabels[indVar])
+            if showVarsSpace:
+                plt.fill_between(chainLTests,ymin,ymax,alpha=0.1)
+
+        plt.legend(); plt.title('Mean')
+
+        plt.figure()
+        for i,indVar in enumerate(indVars):
+            plt.plot(chainLTests,yStd[i],label=varLabels[indVar])
+        plt.legend(); plt.title('Standard Deviation')
+    def _check_history(self,yType='ksquare'):
+        plt.figure()
+        if yType == 'ksquare':
+            y = self.misfits**2*len(self.obs['T'])
+            thres = self.thres**2*len(self.obs['T'])
+        elif yType == 'likelihood':
+            y = self.Ls; thres = None
+        elif yType == 'misfit':
+            y = self.misfits; thres = self.thres
+        else:
+            raise ValueError(f'Unsupported type of y: {yType}')
+        plt.plot(y)
+        ind = np.where(self.accepts.astype(bool))[0]
+        plt.plot(ind,y[ind],'or')
+        if thres:
+            plt.plot([0,self.N],[thres,thres],'--g')
+ 
+    # Unused
     def _model1D_generator(self,N=None,isRandom=True,accFinal=True):
         inds_pool = np.where(self.accFinal)[0] if accFinal else range(self.N)
         N = self.N if N is None else N
@@ -288,98 +375,6 @@ class PostPoint(Point):
             mod._loadMC(self.MCparas[ind,:])
             yield mod
 
-    # in testing
-    def _check(self,step4uwalk=1000):
-        from scipy.ndimage import uniform_filter1d
-        iStart,iEnd = 0,step4uwalk
-        localThres,decayRates,localAccRates = [],[],[]
-        localAccContRates = []
-        # rates,localMins,localThres = [],[],[]
-        while iEnd <= len(self.misfits):
-            Ntail = step4uwalk//2
-            misfits = self.misfits[iStart:iEnd]
-            thres = max(misfits.min()*2,misfits.min()+0.5)
-            localAccI = misfits[-Ntail:]<thres
-            tmp = uniform_filter1d(misfits[-Ntail:][localAccI],31)
-            decayRate = max(0,-np.polyfit(np.arange(len(tmp)),tmp,1)[0]*Ntail)
-            ''' assume the decay continues if we add Ntail more model sampling '''
-            minmisfit_New = tmp.mean()-decayRate*1.5
-            thres_New = max(minmisfit_New*2,minmisfit_New+0.5)
-            # the ratio of models still accepted after more sampling applied
-            localAccContRate = (misfits[-Ntail:]<thres_New).sum()/localAccI.sum()  
-            # print(f'Step:{iStart//step4uwalk}: {localAccI.sum()} {decayRate} {misfits.min()}')
-            decayRates.append(decayRate);localAccRates.append(localAccI.sum()/Ntail)
-            localThres.append(thres);localAccContRates.append(localAccContRate)
-            iStart += step4uwalk; iEnd += step4uwalk
-        plt.figure()
-        plt.scatter(range(len(localThres)),localThres,s=100,c=localAccRates,
-                    norm=mpl.colors.BoundaryNorm([0,0.01,0.05,0.1,0.2,0.3,1],256))
-        plt.colorbar()
-        plt.figure()
-        sc = plt.scatter(range(len(localThres)),localThres,s=100,c=localAccContRates,
-                         norm=mpl.colors.BoundaryNorm([0,0.2,0.4,0.6,0.8,1.0],256))
-                         #s=np.clip(localAccRates,0,0.5)**2*400,
-        # plt.legend(*sc.legend_elements("sizes", num=6))
-        plt.colorbar()
-    def _check_deprecated(self,step4uwalk=1000,stepLens=[]):
-        from scipy.ndimage.filters import uniform_filter1d
-        iStart,iEnd = 0,step4uwalk
-        rates,localMins,localThres = [],[],[]
-        while iEnd <= len(self.misfits):
-            misfits = self.misfits[iStart:iEnd]
-            thres = max(misfits.min()*2,misfits.min()+0.5)
-            localAcc = misfits[step4uwalk//2:]<thres
-            tmp = uniform_filter1d(misfits[step4uwalk//2:][localAcc],31)
-            rate = max(0,-np.polyfit(np.arange(len(tmp)),tmp,1)[0]*(step4uwalk//2))
-            print(f'Step:{iStart//step4uwalk}: {localAcc.sum()} {rate} {misfits.min()}')
-            rates.append(rate);localMins.append(misfits.min());localThres.append(thres)
-            iStart += step4uwalk; iEnd += step4uwalk
-
-        rates = np.array(rates); localMins = np.array(localMins); localThres = np.array(localThres)
-        print((rates > localThres-localMins).sum())
-    
-    # not used now
-    def plotVsProfileStd(self):
-        indFinAcc = np.where(self.accFinal)[0]
-        zdeps = np.linspace(0,199,300)
-        allVs = np.zeros([len(zdeps),len(indFinAcc)])
-
-        mod = self.avgMod.copy()
-        for i,ind in enumerate(indFinAcc):
-            mod._loadMC(self.MCparas[ind,:])
-            profile =  (mod.genProfileGrid())
-            allVs[:,i] = profile.value(zdeps)
-        std = allVs.std(axis=1)
-
-        fig = self.initMod.plotProfileGrid(label='Initial',alpha=0.1)
-        fig.set_figheight(8.4);fig.set_figwidth(5)
-        avgProfile = self.avgMod.value(zdeps)
-        plt.fill_betweenx(zdeps,avgProfile+std,avgProfile-std,facecolor='grey',alpha=0.4)
-        self.avgMod.plotProfileGrid(fig=fig,label='Avg')
-        # self.minMod.plotProfileGrid(fig=fig,label='Min')
-        plt.xlim(3.0,4.8)
-        plt.legend()
-    def plotCheck(self):
-        plt.figure()
-        ksquare = self.misfits**2*len(self.obs['T'])
-        plt.plot(ksquare)
-        ind = np.where(self.accepts>0.1)[0]
-        plt.plot(ind,ksquare[ind],'or')
-        plt.plot([0,self.N],[self.thres**2*len(self.obs['T'])]*2,'--g')
-        
-        ''' plot likelihood '''
-        # plt.figure()
-        # plt.plot(self.Ls)
-        # I = self.accepts==1
-        # plt.plot(np.arange(self.N)[I],self.Ls[I])
-
-        ''' plot misfit '''
-        # plt.figure()
-        # plt.plot(self.misfits)
-        # I = self.accepts==1
-        # plt.plot(np.arange(self.N)[I],self.misfits[I])
-
-        pass
 
 class PostPointCascadia(PostPoint):
     misfit = PointCascadia.misfit
@@ -424,10 +419,15 @@ if __name__ == '__main__':
                    0.00751713560920708, 0.007910350806141024, 0.007711019920661203, 0.010152973423528881,
                    0.01062776863809981, 0.015829560954127662]
         )
-    p.MCinvMP(f'test',pid='test',runN=24000,step4uwalk=800,nprocess=20)
-    p.MCinvMP(f'test_priori',pid='test',runN=24000,step4uwalk=800,nprocess=20,priori=True)
-    postp = PostPointCascadia('test/test.npz')
-    postp.plotVsProfileGrid()
-    postp.plotDisp()
-    postp.plotCheck()
+    p.MCinvMP(f'test',pid='test',runN=24000,chainL=800,nprocess=20)
+    p.MCinvMP(f'test_priori',pid='test',runN=24000,chainL=800,nprocess=20,priori=True)
+
+    # postp = PostPointCascadia('test/test.npz','test_priori/test.npz')
+    # postp.plotDisp()
+    # postp.plotVsProfileGrid()
+    # postp.plotVsProfileShaded()
+    # postp._check_distribution([1])
+    # postp._check_convergency(indVars=[1,3])
+    # postp._check_history()
+
     pass

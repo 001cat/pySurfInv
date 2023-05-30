@@ -1,15 +1,15 @@
 import random,time,os,tqdm
 import numpy as np
 import multiprocessing as mp
-from pySurfInv.models import buildModel1D
+from pySurfInv.models import buildModel1D,MCinv
 from Triforce.pltHead import *
 from Triforce.obspyPlus import randString
 
-
-
 class Point(object):
-    def __init__(self,setting=None,localInfo={},periods=[],vels=[],uncers=[]):
-        self.initMod = buildModel1D(setting,localInfo)
+    def __init__(self,setting=None,localInfo={},modelTypeCustom=None,layerClassCustom={},
+                 periods=[],vels=[],uncers=[]):
+        self.initMod = buildModel1D(setting,localInfo,modelTypeCustom=modelTypeCustom,
+                                    layerClassCustom=layerClassCustom)
         self.obs = {'T':periods,'c':vels,'uncer':uncers} # Rayleigh wave, phase velocity only
         self.pid  = 'test'
     def misfit(self,model=None):
@@ -29,7 +29,7 @@ class Point(object):
         chiSqr =  chiSqr if chiSqr < 50 else np.sqrt(chiSqr*50.) 
         L = np.exp(-0.5 * chiSqr)
         return misfit,chiSqr,L
-    def MCinv(self,outdir='MCtest',pid=None,runN=50000,step4uwalk=1000,init=True,
+    def MCinv(self,outdir='MCtest',pid=None,runN=50000,chainL=1000,init=True,
               seed=None,verbose=False,priori=False,isgood=None):
         def accept(chiSqr0,chiSqr1):
             if chiSqr1 < chiSqr0: # avoid overflow
@@ -44,11 +44,11 @@ class Point(object):
         timeStamp = time.time()
         mcTrack = [0]*runN
         for i in range(runN):
-            if i % step4uwalk == 0:
+            if i % chainL == 0:
                 if init:
                     mod0 = self.initMod.copy();init=False
                     if not isgood(mod0):
-                        mod0 = mod0.perturb(isgood)
+                        mod0 = mod0.perturb(isgood,verbose=verbose=='perturb')
                 else:
                     mod0 = self.initMod.reset()
                     if verbose == True:
@@ -56,7 +56,7 @@ class Point(object):
                 misfit0,chiSqr0,L0 = self.misfit(mod0)
                 mod0._dump(i,mcTrack,[misfit0,L0,1])
             else:
-                mod1 = mod0.perturb(isgood)
+                mod1 = mod0.perturb(isgood,verbose=verbose=='perturb')
                 if debug:
                     plt.figure()
                     T = self.obs['T']
@@ -80,29 +80,34 @@ class Point(object):
         mcTrack = np.array(mcTrack)
         os.makedirs(outdir,exist_ok=True)
         np.savez_compressed(f'{outdir}/{pid}.npz',mcTrack=mcTrack,
-                            setting=dict(self.initMod.toYML()),obs=self.obs,pid=pid)
+                            setting=dict(self.initMod.toYML()),obs=self.obs,invMeta={
+                                'pid':pid, 'chainL':chainL
+                                })
         if verbose == 'mp':
             print(f'Step {pid.split("_")[1]} Time cost:{time.time()-timeStamp:.2f} ')
         else:
             return mod1
-    def MCinvMP(self,outdir='MCtest',pid=None,runN=50000,step4uwalk=1000,nprocess=12,seed=None,priori=False,isgood=None,
+    def MCinvMP(self,outdir='MCtest',pid=None,runN=50000,chainL=1000,nprocess=12,seed=42,priori=False,isgood=None,
                 verbose=True):
         if priori and outdir.split('_')[-1] != 'priori':
             outdir = '_'.join((outdir,'priori'))
-        tmpDir = 'MCtmp'+randString(10)
+        random.seed(None); tmpDir = 'MCtmp'+randString(10)
         random.seed(seed); seed = random.random()
         pid = self.pid if pid is None else pid
 
         if verbose:
             print(f'Running MC inversion: {pid}')
 
-        argInLst = [ [tmpDir,f'tmp_{i:03d}_{pid}',step4uwalk,step4uwalk,i==0,seed+i,
-                      'mp' if verbose else False,priori,isgood] for i in range(runN//step4uwalk)]
+        argInLst = [ [tmpDir,f'tmp_{i:03d}_{pid}',chainL,chainL,i==0,seed+i,
+                      'mp' if verbose else False,priori,isgood] for i in range(runN//chainL)]
         timeStamp = time.time()
         pool = mp.Pool(processes=nprocess)
         pool.starmap(self.MCinv, argInLst)
         pool.close()
         pool.join()
+        
+        # while (time.time() - timeStamp) < waitingForSaving:
+        #     time.sleep(0.5)
 
         subMCLst = []
         for argIn in argInLst:
@@ -113,12 +118,221 @@ class Point(object):
         mcTrack = np.concatenate(subMCLst,axis=0)
         os.makedirs(outdir,exist_ok=True)
         np.savez_compressed(f'{outdir}/{pid}.npz',mcTrack=mcTrack,
-                            setting=dict(self.initMod.toYML()),obs=self.obs,pid=pid)
+                            setting=dict(self.initMod.toYML()),obs=self.obs,invMeta={
+                                'pid':pid, 'chainL':chainL
+                                })
         if verbose:
             print(f'Time cost:{time.time()-timeStamp:.2f} ')
     def copy(self):
         from copy import deepcopy
         return deepcopy(self)
+
+
+def _foo_mod_value(varIn):
+    mod,zdeps,i = varIn
+    return (i,mod.value(zdeps))
+class PostPoint(Point):
+    def __init__(self,npzMC=None,npzPriori=None,
+                 modelTypeCustom=None,layerClassCustom={},
+                 trueMarkovChain=True):
+        if npzMC is not None:
+            tmp = np.load(npzMC,allow_pickle=True)
+            self.MC,setting,self.obs = tmp['mcTrack'],tmp['setting'][()],tmp['obs'][()]
+            self.invMeta = tmp['invMeta'][()]
+            self.initMod = buildModel1D(setting,modelTypeCustom=modelTypeCustom,
+                                        layerClassCustom=layerClassCustom)
+                
+            self.N       = self.MC.shape[0]
+            self.misfits = self.MC[:,0]
+            self.Ls      = self.MC[:,1]
+            self.accepts = self.MC[:,2]
+            self.MCparas = self.MC[:,3:]
+            self.MCparas_pri = None
+
+            if trueMarkovChain:
+                for i in range(self.N):
+                    if self.accepts[i]:
+                        iAcc = i
+                    else:
+                        self.MCparas[i,:] = self.MCparas[iAcc,:]
+
+            indMin = np.nanargmin(self.misfits)
+            self.minMod         = self.initMod.copy()
+            self.minMod._loadMC(self.MCparas[indMin])
+            self.minMod.L       = self.Ls[indMin]
+            self.minMod.misfit  = self.misfits[indMin]
+
+            self.thres  = self._thres(self.minMod.misfit)
+            self.accFinal = (self.misfits < self.thres)
+
+            self.avgMod         = self.initMod.copy()
+            self.avgMod._loadMC(np.mean(self.MCparas[self.accFinal,:],axis=0))
+            
+            self.avgMod.misfit,_,self.avgMod.L = self.misfit(model=self.avgMod)
+
+        if npzPriori is not None:
+            tmp = np.load(npzPriori,allow_pickle=True)['mcTrack']
+            self.MCparas_pri = tmp[:,3:]
+
+    def plotDisp(self,ax=None,ensemble=True):
+        T,vel,uncer = self.obs['T'],self.obs['c'],\
+                      self.obs['uncer']
+        if ax is None:
+            plt.figure()
+        else:
+            plt.axes(ax)
+        
+        if ensemble:
+            for mod in self._model_generator(random.choices(np.where(self.accFinal)[0],k=500)):
+                plt.plot(T,mod.forward(T),color='grey',lw=0.1,alpha=0.2)
+
+        plt.errorbar(T,vel,uncer,ls='None',color='k',capsize=3,capthick=2,elinewidth=2,label='Observation')
+        plt.plot(T,self.initMod.forward(T),label='Initial')
+        plt.plot(T,self.avgMod.forward(T),label='Avg accepted')
+        plt.plot(T,self.minMod.forward(T),label='Min misfit')
+        plt.legend()
+        plt.title('Dispersion')
+        return plt.gcf(),plt.gca()
+    def plotVsProfile(self,allAccepted=False):
+        ax = self.initMod.plotProfile(label='Initial')
+        k = self.N if allAccepted else 2000
+        for mod in self._model_generator(random.choices(np.where(self.accFinal)[0],k=k)):
+            mod.plotProfile(ax=ax,color='grey',lw=0.1,alpha=0.2)
+        self.avgMod.plotProfile(ax=ax,label='Avg')
+        self.minMod.plotProfile(ax=ax,label='Min')
+        plt.xlim(3.8,4.8)
+        plt.legend()
+        return ax
+    def plotVsProfileGrid(self,allAccepted=False,ax=None):
+        ax = self.initMod.plotProfileGrid(label='Initial',ax=ax)
+        k = self.N if allAccepted else 2000
+        for mod in self._model_generator(random.choices(np.where(self.accFinal)[0],k=k)):
+            mod.plotProfileGrid(ax=ax,color='grey',lw=0.1,alpha=0.2)
+        self.avgMod.plotProfileGrid(label='Avg',ax=ax)
+        self.minMod.plotProfileGrid(label='Min',ax=ax)
+        plt.xlim(3.0,4.8)
+        plt.legend()
+        return ax
+    def plotVsProfileShaded(self):
+        indFinAcc = np.where(self.accFinal)[0]
+        zdeps = np.linspace(0,200,200)
+        std = self._loadValues(zdeps=zdeps).std(axis=1)
+
+        ax = self.initMod.plotProfileGrid(label='Initial',alpha=0.2)
+        plt.axes(ax); fig = plt.gcf()
+        fig.set_figheight(8.4);fig.set_figwidth(5)
+        avgProfile = self.avgMod.value(zdeps)
+        plt.fill_betweenx(zdeps,avgProfile+std,avgProfile-std,facecolor='grey',alpha=0.6)
+        self.avgMod.plotProfileGrid(ax=ax,label='Avg')
+        plt.xlim(3.0,4.8)
+        plt.legend()
+
+    def _check_distribution(self,indVars='all',zdeps=None):
+        accYs = self._loadValues(indVars,zdeps,priori=False)
+        priYs = self._loadValues(indVars,zdeps,priori=True)
+
+        indVars = range(len(self.initMod._brownians())) if indVars == 'all' else indVars
+        titles = [f'Parameter index {ind}: {self.accFinal.sum()}/{len(self.accFinal)}' for ind in indVars] \
+                 if zdeps is None else [f'Hist of Vs at {z} km' for z in zdeps]
+        
+        for i,title in enumerate(titles):
+            plt.figure()
+            if self.MCparas_pri is not None:
+                _,bin_edges = np.histogram(priYs[i],bins=30)
+                plt.hist(accYs[i],bins=bin_edges,weights=np.ones_like(accYs[i])/float(len(accYs[i])),
+                            fill=True,ec='k',rwidth=0.8)
+                plt.hist(priYs[i],bins=bin_edges,weights=np.ones_like(priYs[i])/float(len(priYs[i])),
+                            fill=False,ec='k',rwidth=1.0)
+            else:
+                plt.hist(accYs[i],bins=30)
+            plt.title(title)
+    def _check_convergency(self,indVars='all',zdeps=None,showVarsSpace=False):
+        chainL = self.invMeta['chainL']
+        chainLTests = [int(l) for l in np.linspace(chainL/10,chainL,20)]
+        def indChainLTest(chainLTest):
+            N = len(self.misfits); iStart = 0
+            indSteps = np.zeros(N,dtype=bool)
+            while iStart < N:
+                indSteps[iStart:iStart+chainLTest] = True
+                iStart += chainL
+            return indSteps
+        
+        indVars = range(len(self.initMod._brownians())) if indVars == 'all' else indVars
+        nVars = len(indVars) if zdeps is None else len(zdeps)
+        
+        yMean = np.zeros([nVars,len(chainLTests)])
+        yStd  = np.zeros([nVars,len(chainLTests)])
+        for j,chainLTest in enumerate(chainLTests):
+            indSteps = indChainLTest(chainLTest)
+            thres = self._thres(self.misfits[indSteps].min())
+            accInd = np.where((self.misfits<thres) * indSteps)[0]
+            values = self._loadValues(indVars,zdeps,accInd)
+            yMean[:,j] = values.mean(axis=1)
+            yStd[:,j]  = values.std(axis=1)
+
+        varLabels = np.array([f'{i}: {b[1]}-{b[2]}' for i,b in enumerate(self.initMod._brownians(False))])[indVars] \
+                    if zdeps is None else [f'{z} km' for z in zdeps]
+        varMins   = np.array([b[0].vmin for b in self.initMod._brownians(False)])[indVars]
+        varMaxs   = np.array([b[0].vmax for b in self.initMod._brownians(False)])[indVars]
+
+        plt.figure()
+        for i in range(nVars):
+            plt.plot(chainLTests,yMean[i],label=varLabels[i])
+            if showVarsSpace and zdeps is None:
+                plt.fill_between(chainLTests,varMins[i],varMaxs[i],alpha=0.1)
+        plt.legend(); plt.title('Mean')
+
+        plt.figure()
+        for i in range(nVars):
+            plt.plot(chainLTests,yStd[i],label=varLabels[i])
+        plt.legend(); plt.title('Standard Deviation')
+    def _check_history(self,yType='ksquare'):
+        plt.figure()
+        if yType == 'ksquare':
+            y = self.misfits**2*len(self.obs['T'])
+            thres = self.thres**2*len(self.obs['T'])
+        elif yType == 'likelihood':
+            y = self.Ls; thres = None
+        elif yType == 'misfit':
+            y = self.misfits; thres = self.thres
+        else:
+            raise ValueError(f'Unsupported type of y: {yType}')
+        plt.plot(y)
+        ind = np.where(self.accepts.astype(bool))[0]
+        plt.plot(ind,y[ind],'or')
+        if thres:
+            plt.plot([0,self.N],[thres,thres],'--g')
+ 
+    # miscellaneous
+    @staticmethod
+    def _thres(minMisfit):
+        return max(minMisfit*2, minMisfit+0.5)
+    def _model_generator(self,indSteps=None,priori=False) -> MCinv:
+        mod = self.initMod.copy()
+        indSteps = indSteps if indSteps is not None else (np.where(self.accFinal)[0] if not priori else range(len(self.misfits)))
+        mcParas = self.MCparas if not priori else self.MCparas_pri
+        for ind in indSteps:
+            mod._loadMC(mcParas[ind,:])
+            yield mod.copy()
+    def _loadValues(self,indVars='all',zdeps=None,indSteps=None,priori=False):
+        if zdeps is not None:
+            varIns = [(mod,zdeps,i) for i,mod in enumerate(self._model_generator(indSteps,priori=priori))]
+            from multiprocessing import Pool
+            pool = Pool(20)
+            values = pool.map(_foo_mod_value, varIns)
+            pool.close()
+            pool.join()
+            values.sort(key=lambda x: x[0])
+            return np.array([v[1] for v in values]).T
+            # values = np.array([mod.value(zdeps) for mod in self._model_generator(indSteps,priori=priori)])
+        else:
+            indVars = range(len(self.initMod._brownians())) if indVars == 'all' else indVars
+            mcParas = self.MCparas[self.accFinal] if not priori else self.MCparas_pri[self.accFinal]
+            values = np.array([mc[indVars] for mc in mcParas]).T
+        return values
+
+
+
 class PointCascadia(Point):
     def misfit(self,model=None):
         if model is None:
@@ -151,579 +365,60 @@ class PointCascadia(Point):
         L = np.exp(-0.5 * chiSqr)
         return misfit,chiSqr,L
 
-class PostPoint(PointCascadia):
-    def __init__(self,npzMC=None,npzPriori=None,realMCMC=False):
-        if npzMC is not None:
-            tmp = np.load(npzMC,allow_pickle=True)
-            self.MC,setting,self.obs = tmp['mcTrack'],tmp['setting'][()],tmp['obs'][()]
-            self.initMod = buildModel1D(setting)
-            # try:
-            #     self.initMod = buildModel1D(setting)
-            # except:
-            #     from pySurfInv.models import Model1D
-            #     self.initMod = Model1D(); self.initMod.loadYML(setting)
-                
-            self.N       = self.MC.shape[0]
-            self.misfits = self.MC[:,0]
-            self.Ls      = self.MC[:,1]
-            self.accepts = self.MC[:,2]
-            self.MCparas = self.MC[:,3:]
-            self.MCparas_pri = None
+class PostPointCascadia(PostPoint):
+    misfit = PointCascadia.misfit
 
-            if realMCMC:
-                for i in range(self.N):
-                    if self.accepts[i]:
-                        iAcc = i
-                    else:
-                        self.MCparas[i,:] = self.MCparas[iAcc,:]
-
-            indMin = np.nanargmin(self.misfits)
-            self.minMod         = self.initMod.copy()
-            self.minMod._loadMC(self.MCparas[indMin])
-            self.minMod.L       = self.Ls[indMin]
-            self.minMod.misfit  = self.misfits[indMin]
-
-            self.thres  = max(self.minMod.misfit*2, self.minMod.misfit+0.5)
-            self.accFinal = (self.misfits < self.thres)
-
-            self.avgMod         = self.initMod.copy()
-            self.avgMod._loadMC(np.mean(self.MCparas[self.accFinal,:],axis=0))
-            
-            self.avgMod.misfit,_,self.avgMod.L = self.misfit(model=self.avgMod)
-
-        if npzPriori is not None:
-            tmp = np.load(npzPriori,allow_pickle=True)['mcTrack']
-            self.MCparas_pri = tmp[:,3:]
-    def loadpyMCinv(self,dsetFile,id,invDir,priDir=None):
-        from MCinv.ocean_surf_dbase import invhdf5
-        setting_Hongda_pyMCinv = {'water': {'type': 'water',
-                                    'h':  [1,'fixed'],
-                                    'vp': [1.475,'fixed']},
-                                  'sediment': {'type': 'constant',
-                                    'h':  [2, 'abs', 1.0, 0.1],
-                                    'vs': [1.0, 'abs', 1.0, 0.01],
-                                    'vpvs': [2, 'fixed']},
-                                  'crust': {'type': 'linear',
-                                    'h': [7, 'abs',0.001,0.001],
-                                    'vs': [[3.25, 'abs', 0.001, 0.001],
-                                           [3.94, 'abs', 0.001, 0.001]],
-                                    'vpvs': [1.8, 'fixed']},
-                                  'mantle': {'type': 'Bspline',
-                                    'h': [200, 'total'],
-                                    'vs': [[4.4, 'rel', 10, 0.02],
-                                           [4.0, 'rel', 10, 0.02],
-                                           [4.3, 'rel', 10, 0.02],
-                                           [4.5, 'rel', 5, 0.02]],
-                                    'vpvs': [1.76, 'fixed']},
-                                  'Info':{'label':'Hongda-2021Summer'}}
-
-        dset = invhdf5(dsetFile,'r')
-        topo = dset[id].attrs['topo']
-        sedthk = dset[id].attrs['sedi_thk']
-        lithoAge = dset[id].attrs['litho_age']
-        self.initMod = buildModel1D(setting_Hongda_pyMCinv,
-                            {'topo':topo,'sedthk':sedthk,'lithoAge':lithoAge})
-
-        T,pvelp,pvelo,uncer = np.loadtxt(f'{invDir}/{id}_0.ph.disp').T
-        self.obs = {'T':T,'c':pvelo,'uncer':uncer}
-
-        inarr = np.load(f'{invDir}/mc_inv.{id}.npz')
-        invdata    = inarr['arr_0']
-        disppre_ph = inarr['arr_1']
-        disppre_gr = inarr['arr_2']
-        rfpre      = inarr['arr_3']
-
-        self.N        = invdata.shape[0]
-        self.accepts  = invdata[:,0]
-        iaccept       = invdata[:,1]
-        paraval       = invdata[:,2:11]
-        self.Ls       = invdata[:,11]
-        self.misfits  = invdata[:,12]
-
-        # vsed,vcrust1,vcrust2,vmantle1,vmantle2,vmantle3,vmantle4,hsed,hcrust
-        colOrder = np.array([7,0,8,1,2,3,4,5,6])
-        self.MCparas = paraval[:,colOrder]
-
-
-
-        indMin = np.nanargmin(self.misfits)
-        self.minMod         = self.initMod.copy()
-        self.minMod._loadMC(self.MCparas[indMin])
-        self.minMod.L       = self.Ls[indMin]
-        self.minMod.misfit  = self.misfits[indMin]
-
-        self.thres  = max(self.minMod.misfit*2, self.minMod.misfit+0.5)
-        self.accFinal = (self.misfits < self.thres)
-
-        self.avgMod         = self.initMod.copy()
-        self.avgMod._loadMC(np.mean(self.MCparas[self.accFinal,:],axis=0))
-        self.avgMod.misfit,self.avgMod.L = self.misfit(model=self.avgMod)
-
-        if priDir is not None:
-            inarr = np.load(f'{priDir}/mc_inv.{id}.npz')
-            invdata    = inarr['arr_0']
-            paraval       = invdata[:,2:11]
-            self.Priparas = paraval[:,colOrder]
-    def plotDisp(self,ax=None,ensemble=True):
-        T,vel,uncer = self.obs['T'],self.obs['c'],\
-                      self.obs['uncer']
-        if ax is None:
-            plt.figure()
-        else:
-            plt.axes(ax)
-        mod = self.avgMod.copy()
-        indFinAcc = np.where(self.accFinal)[0]
-        if ensemble:
-            for _ in range(min(len(indFinAcc),500)):
-                i = random.choice(indFinAcc)
-                mod._loadMC(self.MCparas[i,:])
-                plt.plot(T,mod.forward(T),color='grey',lw=0.1)
-        plt.errorbar(T,vel,uncer,ls='None',color='k',capsize=3,capthick=2,elinewidth=2,label='Observation')
-        plt.plot(T,self.initMod.forward(T),label='Initial')
-        plt.plot(T,self.avgMod.forward(T),label='Avg accepted')
-        plt.plot(T,self.minMod.forward(T),label='Min misfit')
-        plt.legend()
-        plt.title('Dispersion')
-        return plt.gcf(),plt.gca()
-    def plotDistrib(self,inds='all',zdeps=None):
-        def loadMC(mod,mc):
-            mod._loadMC(mc)
-            return mod.copy()
-        if zdeps is not None:
-            mod = self.initMod.copy()
-            accMods = [loadMC(mod,mc) for mc in self.MCparas[self.accFinal]]
-            accYs   = np.array([mod.value(zdeps) for mod in tqdm.tqdm(accMods)]).T
-            if self.MCparas_pri is not None:
-                priMods = [loadMC(mod,mc) for mc in self.MCparas_pri[:]]
-                priYs   = np.array([mod.value(zdeps) for mod in tqdm.tqdm(priMods)]).T
-            titles = [f'Hist of Vs at {z} km' for z in zdeps]
-        else:
-            inds = range(len(self.initMod._brownians())) if inds == 'all' else inds
-            accYs = [self.MCparas[self.accFinal,ind] for ind in inds]
-            if self.MCparas_pri is not None:
-                priYs = [self.MCparas_pri[:,ind] for ind in inds]
-            titles = [f'Parameter index {ind}: {self.accFinal.sum()}/{len(self.accFinal)}' for ind in inds]
-
-        for i,title in enumerate(titles):
-            plt.figure()
-            if self.MCparas_pri is not None:
-                _,bin_edges = np.histogram(priYs[i],bins=30)
-                plt.hist(accYs[i],bins=bin_edges,weights=np.ones_like(accYs[i])/float(len(accYs[i])))
-                plt.hist(priYs[i],bins=bin_edges,weights=np.ones_like(priYs[i])/float(len(priYs[i])),
-                            fill=False,ec='k',rwidth=1.0)
-            else:
-                plt.hist(accYs[i],bins=30)
-            plt.title(title)
-            
-        return
-
-        plt.figure()
-        y = self.MCparas_pri[:,ind]
-        _,bin_edges = np.histogram(y,bins=30)
-        y = self.MCparas[self.accFinal,ind]
-        plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)))
-        y = self.MCparas_pri[:,ind]
-        plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)),
-                    fill=False,ec='k',rwidth=1.0)
-        plt.title(f'N = {self.accFinal.sum()}/{len(self.accFinal)}')
-
-        
-        
-        
-        
-        
-        if zdeps is not None:
-            mod = self.initMod.copy()
-            accMods = [loadMC(mod,mc) for mc in self.MCparas[self.accFinal]]
-            accVs   = np.array([mod.value(zdeps) for mod in tqdm.tqdm(accMods)])
-            priMods = [loadMC(mod,mc) for mc in self.MCparas_pri[:]]
-            priVs   = np.array([mod.value(zdeps) for mod in tqdm.tqdm(priMods)])
-            for i,z in enumerate(zdeps):
-                plt.figure()
-                _,bin_edges = np.histogram(priVs[:,i],bins=30)
-                y = accVs[:,i]
-                plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)))
-                y = priVs[:,i]
-                plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)),
-                            fill=False,ec='k',rwidth=1.0)
-                plt.title(f'Hist of Vs at {z} km')
-            return
-        else:
-            if inds == 'all':
-                inds = range(len(self.initMod._brownians()))
-            for ind in inds:
-                plt.figure()
-                y = self.MCparas_pri[:,ind]
-                _,bin_edges = np.histogram(y,bins=30)
-                y = self.MCparas[self.accFinal,ind]
-                plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)))
-                y = self.MCparas_pri[:,ind]
-                plt.hist(y,bins=bin_edges,weights=np.ones_like(y)/float(len(y)),
-                            fill=False,ec='k',rwidth=1.0)
-                plt.title(f'N = {self.accFinal.sum()}/{len(self.accFinal)}')
-    def plotVsProfile(self,allAccepted=False):
-        ax = self.initMod.plotProfile(label='Initial')
-        mod = self.avgMod.copy()
-        indFinAcc = np.where(self.accFinal)[0]
-        for i in range(min(len(indFinAcc),(self.N if allAccepted else 2000))):
-            ind = indFinAcc[i] if allAccepted else random.choice(indFinAcc)
-            mod._loadMC(self.MCparas[ind,:])
-            mod.plotProfile(ax=ax,color='grey',lw=0.1)
-        self.avgMod.plotProfile(ax=ax,label='Avg')
-        self.minMod.plotProfile(ax=ax,label='Min')
-        plt.xlim(3.8,4.8)
-        plt.legend()
-        return ax
-    def plotVsProfileGrid(self,allAccepted=False,ax=None):
-        ax = self.initMod.plotProfileGrid(label='Initial',ax=ax)
-        # if ax is None:
-        #     fig.set_figheight(8.4);fig.set_figwidth(5)
-        mod = self.avgMod.copy()
-        indFinAcc = np.where(self.accFinal)[0]
-        for i in range(min(len(indFinAcc),(self.N if allAccepted else 500))):
-            ind = indFinAcc[i] if allAccepted else random.choice(indFinAcc)
-            mod._loadMC(self.MCparas[ind,:])
-            mod.plotProfileGrid(color='grey',ax=ax,lw=0.1)
-        self.avgMod.plotProfileGrid(label='Avg',ax=ax)
-        self.minMod.plotProfileGrid(label='Min',ax=ax)
-        plt.xlim(3.0,4.8)
-        plt.legend()
-        return ax
-    
-    # in testing
-    def _check(self,step4uwalk=1000):
-        from scipy.ndimage import uniform_filter1d
-        iStart,iEnd = 0,step4uwalk
-        localThres,decayRates,localAccRates = [],[],[]
-        localAccContRates = []
-        # rates,localMins,localThres = [],[],[]
-        while iEnd <= len(self.misfits):
-            Ntail = step4uwalk//2
-            misfits = self.misfits[iStart:iEnd]
-            thres = max(misfits.min()*2,misfits.min()+0.5)
-            localAccI = misfits[-Ntail:]<thres
-            tmp = uniform_filter1d(misfits[-Ntail:][localAccI],31)
-            decayRate = max(0,-np.polyfit(np.arange(len(tmp)),tmp,1)[0]*Ntail)
-            ''' assume the decay continues if we add Ntail more model sampling '''
-            minmisfit_New = tmp.mean()-decayRate*1.5
-            thres_New = max(minmisfit_New*2,minmisfit_New+0.5)
-            # the ratio of models still accepted after more sampling applied
-            localAccContRate = (misfits[-Ntail:]<thres_New).sum()/localAccI.sum()  
-            # print(f'Step:{iStart//step4uwalk}: {localAccI.sum()} {decayRate} {misfits.min()}')
-            decayRates.append(decayRate);localAccRates.append(localAccI.sum()/Ntail)
-            localThres.append(thres);localAccContRates.append(localAccContRate)
-            iStart += step4uwalk; iEnd += step4uwalk
-        plt.figure()
-        plt.scatter(range(len(localThres)),localThres,s=100,c=localAccRates,
-                    norm=mpl.colors.BoundaryNorm([0,0.01,0.05,0.1,0.2,0.3,1],256))
-        plt.colorbar()
-        plt.figure()
-        sc = plt.scatter(range(len(localThres)),localThres,s=100,c=localAccContRates,
-                         norm=mpl.colors.BoundaryNorm([0,0.2,0.4,0.6,0.8,1.0],256))
-                         #s=np.clip(localAccRates,0,0.5)**2*400,
-        # plt.legend(*sc.legend_elements("sizes", num=6))
-        plt.colorbar()
-    def _check_deprecated(self,step4uwalk=1000,stepLens=[]):
-        from scipy.ndimage.filters import uniform_filter1d
-        iStart,iEnd = 0,step4uwalk
-        rates,localMins,localThres = [],[],[]
-        while iEnd <= len(self.misfits):
-            misfits = self.misfits[iStart:iEnd]
-            thres = max(misfits.min()*2,misfits.min()+0.5)
-            localAcc = misfits[step4uwalk//2:]<thres
-            tmp = uniform_filter1d(misfits[step4uwalk//2:][localAcc],31)
-            rate = max(0,-np.polyfit(np.arange(len(tmp)),tmp,1)[0]*(step4uwalk//2))
-            print(f'Step:{iStart//step4uwalk}: {localAcc.sum()} {rate} {misfits.min()}')
-            rates.append(rate);localMins.append(misfits.min());localThres.append(thres)
-            iStart += step4uwalk; iEnd += step4uwalk
-
-        rates = np.array(rates); localMins = np.array(localMins); localThres = np.array(localThres)
-        print((rates > localThres-localMins).sum())
-    def _mod_generator(self,N=None,isRandom=True,accFinal=True):
-        inds_pool = np.where(self.accFinal)[0] if accFinal else range(self.N)
-        N = self.N if N is None else N
-        if isRandom:
-            inds = [random.choice(inds_pool) for _ in range(N)]
-        else:
-            inds = inds_pool[:N]
-
-        mod = self.initMod.copy()
-        for ind in inds:
-            mod._loadMC(self.MCparas[ind,:])
-            yield mod
-
-    # not used now
-    def plotVsProfileStd(self):
-        indFinAcc = np.where(self.accFinal)[0]
-        zdeps = np.linspace(0,199,300)
-        allVs = np.zeros([len(zdeps),len(indFinAcc)])
-
-        mod = self.avgMod.copy()
-        for i,ind in enumerate(indFinAcc):
-            mod._loadMC(self.MCparas[ind,:])
-            profile =  (mod.genProfileGrid())
-            allVs[:,i] = profile.value(zdeps)
-        std = allVs.std(axis=1)
-
-        fig = self.initMod.plotProfileGrid(label='Initial',alpha=0.1)
-        fig.set_figheight(8.4);fig.set_figwidth(5)
-        avgProfile = self.avgMod.value(zdeps)
-        plt.fill_betweenx(zdeps,avgProfile+std,avgProfile-std,facecolor='grey',alpha=0.4)
-        self.avgMod.plotProfileGrid(fig=fig,label='Avg')
-        # self.minMod.plotProfileGrid(fig=fig,label='Min')
-        plt.xlim(3.0,4.8)
-        plt.legend()
-    def plotCheck(self):
-        plt.figure()
-        ksquare = self.misfits**2*len(self.obs['T'])
-        plt.plot(ksquare)
-        ind = np.where(self.accepts>0.1)[0]
-        plt.plot(ind,ksquare[ind],'or')
-        plt.plot([0,self.N],[self.thres**2*len(self.obs['T'])]*2,'--g')
-        
-        ''' plot likelihood '''
-        # plt.figure()
-        # plt.plot(self.Ls)
-        # I = self.accepts==1
-        # plt.plot(np.arange(self.N)[I],self.Ls[I])
-
-        ''' plot misfit '''
-        # plt.figure()
-        # plt.plot(self.misfits)
-        # I = self.accepts==1
-        # plt.plot(np.arange(self.N)[I],self.misfits[I])
-
-        pass
-
-
-# For cascadia 
-from netCDF4 import Dataset
-from Triforce.utils import GeoMap
-class InvPointGenerator_Cascadia():
-    # modelsDir = '/projects/mewu4448/Projects/Cascadia/Models'  # for summit
-    modelsDir = '/home/ayu/Projects/Cascadia/Models'           # for marin
-    def __init__(self,npzfile) -> None:
-        import shapefile
-        from matplotlib.patches import Polygon
-        self.grd = np.load(npzfile,allow_pickle=True)['grd'][()]
-        self.eik = np.load(npzfile,allow_pickle=True)['eikStack'][()]
-
-        plates = shapefile.Reader(f'{self.modelsDir}/Plates/PB2002_plates.shp')
-        self.plateNA = Polygon(plates.shapes()[6].points).get_path()
-        self.platePA = Polygon(plates.shapes()[9].points).get_path()
-        self.plateJF = Polygon(plates.shapes()[26].points).get_path()
-        self.prismJF = Polygon(np.loadtxt('Input/prism.csv',delimiter=','))
-
-        with Dataset(f'{self.modelsDir}/ETOPO_Cascadia_smoothed.grd') as dset:
-            self.topo = GeoMap(dset['lon'][()],dset['lat'][()],dset['z'][()]/1000)
-        with Dataset(f'{self.modelsDir}/Crust1.0/crsthk.grd') as dset:
-            self.crsthk = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()])
-        with Dataset(f'{self.modelsDir}/Crust1.0/sedthk.grd') as dset:
-            self.sedthk = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()])
-        with Dataset(f'{self.modelsDir}/SedThick/sedthick_world_v2.grd') as dset:
-            self.sedthkOce = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()]/1000)
-        with Dataset(f'{self.modelsDir}/age_JdF_model_0.01.grd') as dset:
-            self.lithoAge = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()])
-
-        # slab_Hayes: Hayes, G., 2018, Slab2 - A Comprehensive Subduction Zone Geometry Model: 
-        # U.S. Geological Survey data release, https://doi.org/10.5066/F7PV6JNV.
-        with Dataset(f'{self.modelsDir}/Slab2_Cascadia/cas_slab2_dep_02.24.18.grd') as dset:
-            self.slabDep = GeoMap(dset['x'][()]-360,dset['y'][()],-dset['z'][()])
-        with Dataset(f'{self.modelsDir}/Slab2_Cascadia/cas_slab2_dip_02.24.18.grd') as dset:
-            self.slabDip = GeoMap(dset['x'][()]-360,dset['y'][()],dset['z'][()])
-
-        lons = np.arange(-132,-120,0.1); lats = np.arange(39,51,0.1)
-        prismThk = np.zeros((len(lats),len(lons)))*np.nan
-        for i in range(prismThk.shape[0]):
-            for j in range(prismThk.shape[1]):
-                lon,lat = lons[j],lats[i]
-                if np.isnan(self.sedthkOce.value(lon,lat)):
-                    prismThk[i,j] = self.slabDep.value(lon,lat) - max(-self.topo.value(lon,lat),0)-self.sedthk.value(lon,lat)
-                else:
-                    prismThk[i,j] = self.slabDep.value(lon,lat) - max(-self.topo.value(lon,lat),0)-self.sedthkOce.value(lon,lat)
-                if self.plateJF.contains_point((lon,lat)) or self.platePA.contains_point((lon,lat)):
-                    prismThk[i,j] = 0
-        self.prismthk = GeoMap(lons,lats,prismThk,mask=np.isnan(prismThk))
-        
-        # self.sedthkOce = GeoMap(); self.sedthkOce.load(f'{priorDir}/sedThk.npz')
-        self.mantleInitParmVs = GeoMap(); self.mantleInitParmVs.load(f'Input/parmVs_Ritzwoller.npz')
-
-    def getDisp(self,ptlon,ptlat):
-        grd,eik = self.grd,self.eik
-        try:
-            if grd._lon_type == '0 to 360':
-                ptlon += 360*(ptlon<0)
-            i,j = grd._findInd(ptlon,ptlat)
-        except:
-            raise ValueError(f'Point lon={ptlon} lat={ptlat} can not be found')
-        pers = [float(Tstr[:-1]) for Tstr in eik.keys()]
-
-        vels = np.array([eik[Tstr]['vel_iso'][i,j] for Tstr in eik.keys()])
-        sems = np.array([eik[Tstr]['vel_sem'][i,j] for Tstr in eik.keys()])
-        mask = np.array([eik[Tstr]['mask'][i,j] for Tstr in eik.keys()])
-
-        vels[mask] = np.nan
-        sems[mask] = np.nan
-        vels = np.ma.masked_array(vels,mask=mask)
-        sems = np.ma.masked_array(sems,mask=mask)
-        return pers,vels,sems
-
-    def genPoint(self,ptlat,ptlon,upscale=2,minUncer=0.005,loc=None,setting=(
-                'Input/cascadia-ocean.yml',
-                'Input/cascadia-prism.yml',
-                'Input/cascadia-continent.yml'
-                )):
-        ptlon -= 360*(ptlon>180)
-        pers,vels,sems = self.getDisp(ptlon,ptlat)
-        sems.mask[np.isnan(vels)] = True
-        vels.mask[np.isnan(vels)] = True
-        uncers = upscale*sems; uncers[uncers<minUncer] = minUncer
-        if (~vels.mask).sum() < 10:
-            print(f'Measurements < 10, skip')
-            return None,None
-        if ((not self.plateNA.contains_point((ptlon,ptlat))) and loc is None) or (loc=='ocean'):
-            print(f'Inside ocean plate')
-            outDir = 'OceanInv'
-            p = Point(setting[0],{
-                'topo':self.topo.value(ptlon,ptlat),
-                'lithoAge':self.lithoAge.value(ptlon,ptlat),
-                'sedthk':self.sedthkOce.value(ptlon,ptlat),
-                'mantleInitParmVs':self.mantleInitParmVs.value(ptlon,ptlat)
-                },periods=pers,vels=vels,uncers=uncers)
-        elif (self.prismJF.contains_point((ptlon,ptlat)) and loc is None) or (loc=='prism'):
-            print('In prism')
-            outDir = 'PrismInv'
-            p = Point(setting[1],{
-                'topo':self.topo.value(ptlon,ptlat),
-                'sedthk':self.sedthk.value(ptlon,ptlat) if np.isnan(self.sedthkOce.value(ptlon,ptlat)) else self.sedthkOce.value(ptlon,ptlat),
-                'prismthk':200 if np.isnan(self.prismthk.value(ptlon,ptlat)) else self.prismthk.value(ptlon,ptlat),
-                'lithoAge':10
-            },periods=pers,vels=vels,uncers=uncers)
-        elif loc in (None,'continent'):
-            print(f'In continent')
-            outDir = 'LandInv'
-            p = Point(setting[2],{
-                'topo':self.topo.value(ptlon,ptlat),
-                'sedthk':self.sedthk.value(ptlon,ptlat),
-                'crsthk':self.crsthk.value(ptlon,ptlat),
-                'lithoAge':10
-            },periods=pers,vels=vels,uncers=uncers)
-        elif loc == 'test':
-            outDir = 'test'
-            setting = 'Input/cascadia-prism-test.yml'
-            p = Point(setting,{
-                'topo':self.topo.value(ptlon,ptlat),
-                'sedthk':self.sedthk.value(ptlon,ptlat) if np.isnan(self.sedthkOce.value(ptlon,ptlat)) else self.sedthkOce.value(ptlon,ptlat),
-                'prismthk':200 if np.isnan(self.prismthk.value(ptlon,ptlat)) else self.prismthk.value(ptlon,ptlat),
-                'lithoAge':10
-            },periods=pers,vels=vels,uncers=uncers)
-        else:
-            raise ValueError(f'Wrong location specificated {loc}')
-
-        # return None if np.nan found in p.initMod
-        from pySurfInv.utils import _dictIterModifier
-        def checker(v):
-            try:
-                len(v);isnan=False
-            except:
-                isnan = bool(np.isnan(v))
-            if isnan:
-                raise ValueError('nan value found')
-            else:
-                return False
-        def modifier(v):
-            return v
-        try:
-            _dictIterModifier(p.initMod.toYML(),checker,modifier)
-        except ValueError as e:
-            if str(e) == 'nan value found':
-                return None,None
-            else:
-                raise e
-        
-        p.pid = f'{ptlon+360*(ptlon<0):.1f}_{ptlat:.1f}'
-        return p,outDir
-
-    def genPointLst(self):
-        raise ValueError('To be specificated')
-
-
-
-# Testing
-def synthetic_test():
-    random.seed(36)
-    periods = np.array([10,12,14,16,18,20,24,28,32,36,40,50,60,70,80])
-    mod1 = buildModel1D('cascadia-ocean.yml',{'topo':-4,'sedthk':0.6,'lithoAge':3})
-    mod2 = mod1.copy()
-    for _ in range(20):
-        mod2 = mod2.perturb()
-    p = Point('cascadia-ocean.yml',{'topo':-4,'lithoAge':3},periods=periods,
-              vels=mod2.forward(periods),uncers=[0.01]*len(periods))
-    p.MCinvMP(runN=50000,step4uwalk=1000,nprocess=26)
-    p.MCinvMP('MCtest_priori',runN=50000,step4uwalk=1000,nprocess=26,priori=True)
-
-    postp = PostPoint('MCtest/test.npz','MCtest_priori/test.npz')
-    postp.plotDisp()
-    postp.plotDistrib()
-    fig = postp.plotVsProfileGrid()
-    mod2.plotProfileGrid(fig=fig,label='True',lineStyle='--')
-    plt.legend()
-
-def realdata_test():
-    from netCDF4 import Dataset
-    from Triforce.utils import GeoMap
-    with Dataset('example-Cascadia/infos/ETOPO_Cascadia_smoothed.grd') as dset:
-        topo = GeoMap(dset['lon'][()],dset['lat'][()],dset['z'][()]/1000)
-    with Dataset('example-Cascadia/infos/sedthick_world_v2.grd') as dset:
-        sedthkOce = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()]/1000)
-    with Dataset('example-Cascadia/infos/age_JdF_model_0.01.grd') as dset:
-        lithoAge = GeoMap(dset['x'][()],dset['y'][()],dset['z'][()])
-    topoDict = {
-        '232.0_46.0':topo.value(232.0,46.0),
-        '233.0_46.0':topo.value(233.0,46.0),
-        '234.0_46.0':topo.value(234.0,46.0)
-    }
-    sedthkDict = {
-        '232.0_46.0':0.8, #0.396
-        '233.0_46.0':sedthkOce.value(233.0,46.0),
-        '234.0_46.0':sedthkOce.value(234.0,46.0)
-    }
-    lithoAgeDict = {
-        '232.0_46.0':lithoAge.value(232.0,46.0),
-        '233.0_46.0':5, #6.73
-        '234.0_46.0':15 #8.10
-    }
-
-
-    for pid in ['232.0_46.0','233.0_46.0','234.0_46.0']:
-        postp = PostPoint(f'/work2/ayu/Cascadia/Works/invA0_2022_Jan10/OceanInv/{pid}.npz')
-        pers,vels,uncers = postp.obs['T'],postp.obs['c'],postp.obs['uncer']
-        if pid == '233.0_46.0':
-            pers,vels,uncers = pers[:-1],vels[:-1],uncers[:-1]
-        p = Point('cascadia-ocean.yml',{
-            'topo':topoDict[pid],
-            'lithoAge':lithoAgeDict[pid],
-            'sedthk':sedthkDict[pid]},
-                periods=pers,vels=vels,uncers=uncers)
-        if pid == '233.0_46.0':
-            from pySurfInv.brownian import BrownianVar
-            p.initMod._layers[-1].parm['Vs'][1] = BrownianVar(-0.2,-0.6,0.2,0.02)
-        p.pid = pid
-        p.MCinvMP(runN=17000,step4uwalk=1000,nprocess=17)
-        p.MCinvMP('MCtest_priori',runN=17000,step4uwalk=1000,nprocess=17,priori=True)
-
-    fig = plt.figure(figsize=[5,8.4])
-    for pid in ['232.0_46.0','233.0_46.0','234.0_46.0']:
-        postp = PostPoint(f'MCtest/{pid}.npz',f'MCtest_priori/{pid}.npz')
-        postp.avgMod.plotProfileGrid(fig=fig,label=pid)
-    plt.legend()
-    plt.xlim(4.0,4.8)
-
-    pid = '232.0_46.0'
-    postp = PostPoint(f'MCtest/{pid}.npz',f'MCtest_priori/{pid}.npz')
-    postp.plotVsProfileGrid()
-    postp.plotDistrib([0,-1])
-    postp.plotDisp()
 
 if __name__ == '__main__':
+    # setting = {
+    #     'OceanWater'            : {'H':2},
+    #     'OceanSedimentCascadia' : {'H':[1,'rel_pos',100,0.1]},
+    #     'OceanCrust'            : {'H':7, 'Vs':[3.25, 3.94]},
+    #     'OceanMantleHybrid'     : {'BottomDepth':200, 
+    #                                'Conversion':'Ritzwoller',
+    #                                'ThermAge':[4,'rel_pos',200,0.4],
+    #                                'Vs': [[0, 'abs', 0.4, 0.01],
+    #                                       [0, 'abs', 0.4, 0.01],
+    #                                       [0, 'abs', 0.4, 0.01],
+    #                                       [0, 'abs', 0.2, 0.01]]
+    #                                },
+    #     'Info':{
+    #         'modelType' : 'CascadiaOcean',
+    #         'period'    : 10,
+    #         'refLayer'  : True,
+    #         'lithoAgeQ' : True
+    #     }
+    # }
+
+    # p = PointCascadia(setting,localInfo={
+    #     'topo':-2.567706,
+    #     'lithoAge':0.6,
+    #     'sedthk':0.019,
+    #     'mantleInitParmVs':[-0.3426920324186606,-0.1863907997418917,
+    #                         -0.1882828662382096,-0.05648363217566826]
+    #     },
+    #     periods = [10,12,14,16,18,20,22,24,26,28,30,32,36,40,50,60,70,80],
+    #     vels    = [3.5724066175576223, 3.6222019289297043, 3.6520621581430763, 3.6588731735179367,
+    #                3.673255450218663,  3.683443600610537,  3.6844591498161896, 3.689993791502759,
+    #                3.6935745493241487, 3.696092260762209,  3.707185398688356,  3.7148258328900985,
+    #                3.7209668755498257, 3.7486729577980427, 3.7706463827824748, 3.82144353111797,
+    #                3.8603954933518914, 3.9030011211762767],
+    #     uncers  = [0.006550350458769691, 0.005, 0.005, 0.005,
+    #                0.005, 0.005, 0.005, 0.005, 
+    #                0.005, 0.005, 0.005, 0.005499996722895128, 
+    #                0.00751713560920708, 0.007910350806141024, 0.007711019920661203, 0.010152973423528881,
+    #                0.01062776863809981, 0.015829560954127662]
+    #     )
+    # p.MCinvMP(f'test',pid='test',runN=24000,chainL=800,nprocess=20)
+    # p.MCinvMP(f'test_priori',pid='test',runN=24000,chainL=800,nprocess=20,priori=True)
+
+    postp = PostPointCascadia('test/test.npz','test_priori/test.npz')
+    # postp.plotDisp()
+    # postp.plotVsProfileGrid()
+    # postp.plotVsProfileShaded()
+    # postp._check_distribution(zdeps=[50])
+    # postp._check_convergency(zdeps=[50])
+    # postp._check_convergency(indVars=[1])
+    # postp._check_history()
+
     pass

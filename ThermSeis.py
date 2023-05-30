@@ -12,6 +12,7 @@ Next version of class for elastic/anelastic model to replace OceanSeis.py
 '''
 
 class TherModel():
+    ''' One dimensional temperature profile (zdeps,T)'''
     def __init__(self,**kwargs) -> None:
         self.zdeps = kwargs.get('zdeps',None)       # in km
         self.T     = kwargs.get('T',self._calT())   # in K
@@ -38,16 +39,18 @@ class TherModel():
         T = self._calT()
         rho = rho0*(1+kappa*(P-P0)-alpha*(T-T0))
         return rho
-
+    def copy(self):
+        from copy import deepcopy
+        return deepcopy(self)
 class SeisModel():
     def __init__(self,therModel=None,**kwargs) -> None:
         if therModel is not None:
             self.fromThermal(therModel)
         else:
-            self.zdeps = None
-            self.vs    = None
+            self.zdeps = None               # in km
+            self.vs    = None               # in km/s
     def fromThermal(self,therModel):
-        self._therMod = therModel
+        self._therMod = therModel.copy()
         pass
 
 class HSCM(TherModel):
@@ -86,6 +89,7 @@ class HSCM(TherModel):
         T = (Tm-T0)*theta+T0
         try:
             # adiaBegin = np.where(np.diff(T)/np.diff(zdeps) < Da)[0][0]
+            # T[adiaBegin:] = T_adiabatic[adiaBegin:]
             adiaBegin = np.where(zdeps > z_adiaBegin)[0][0]
             if adiaBegin == 0:
                 T = T_adiabatic
@@ -97,7 +101,7 @@ class HSCM(TherModel):
         return T+C2K
 
 class OceanSeisRitz(SeisModel):  # https://doi.org/10.1111/j.1365-246X.2004.02254.x 
-    def __init__(self, therModel=None, **kwargs) -> None:
+    def __init__(self, therMod=None, **kwargs) -> None:
         self.X          = kwargs.get('X',0.1)
         self.ws         = kwargs.get('ws',[0.75,0.21,0.035,0,0.005]) #https://doi.org/10.1016/0012-821X(84)90076-1
         self.RhoType    = kwargs.get('RhoType','raw')
@@ -123,7 +127,7 @@ class OceanSeisRitz(SeisModel):  # https://doi.org/10.1111/j.1365-246X.2004.0225
                         'mu0':92,'mu_T':-10e-3,'mu_P':1.4,'mu_X':-7,
                         'alpha0':0.0991e-4,'alpha1':0.1165e-7,'alpha2':1.0624e-2,'alpha3':-2.5000}
         }
-        super().__init__(therModel, **kwargs)
+        super().__init__(therMod, **kwargs)
     
     def _pt2vs(self,P,T): # P in GPa, T in K
         ws,X = self.ws,self.X
@@ -164,135 +168,44 @@ class OceanSeisRitz(SeisModel):  # https://doi.org/10.1111/j.1365-246X.2004.0225
         self._mu  = mu
         return vs
     def fromThermal(self,therMod):
-        self._therMod = therMod
+        self._therMod = therMod.copy()
         self.zdeps = therMod.zdeps
-        self.vs    = self._pt2vs(therMod.P/1e9,therMod.T)
+        self.vs    = self._pt2vs(therMod.P/1e9,therMod.T)/1000
 
-class OceanSeisRuan_old(SeisModel):  # https://doi.org/10.1016/j.epsl.2018.05.035
-    def __init__(self,therModel=None,damp=True,YaTaJu=False,period=50) -> None:
-        if therModel is not None:
-            self.fromThermal(therModel,damp,YaTaJu,period)
-        else:
-            self.zdeps = None
-            self.vs    = None
-    def fromThermal(self, therModel,damp=True,YaTaJu=False,period=50):
-        super().fromThermal(therModel)
-        Ju = 1/(72.45-0.01094*(therModel.T-273.15)+1.75*therModel.P/1e9)*1e-9
-        if YaTaJu:
-            Ju = 1/(72.45-0.01094*(therModel.T-273.15)+1.987*therModel.P/1e9)*1e-9
-        J1,J2,Tn = self._calQ_ruan(therModel.T,therModel.P,period=period,damp=damp,verbose=True)
-        self.zdeps = therModel.zdeps
-        self.vs    = 1/np.sqrt(therModel.rho*Ju*J1)
-        # if np.any(Tn>1):
-        #     self.vs[Tn>1] = np.clip(self.vs[Tn>1] * (1-(Tn[Tn>1]-1)/0.001 * 0.078),a_min=0,a_max=10)
-        self.vs_no_anelastic = 1/np.sqrt(therModel.rho*Ju)
-        self.qs    = J1/J2
-        self._Tn = Tn
-    @staticmethod
-    def _calQ_ruan(T,P,period,damp=True,verbose=False):
-        ''' calculate quality factor follow Ruan+(2018) 
-        T: temperature in K
-        P: pressure in Pa
-        period: seismic wave period in second
-        '''
-        from scipy.special import erf
-        
-        def calTn(T,P): # solidus given pressure and temperature
-            P = P/1e9
-            if damp is True:
-                Tm = -5.1*P**2 + 92.5*P + 1120.6 + 273.15
-            elif damp is False:
-                Tm = -5.1*P**2 + 132.9*P + 1120.6 + 273.15
-            else:
-                Tm = damp
-            return T/Tm
-        def calTauM(T,P): # Maxwell time for viscous relaxation
-            def A_eta(Tn):
-                gamma = 5
-                Tn_eta = 0.94
-                minuslamphi = 0
-                Aeta = np.zeros(Tn.shape)
-                for i in range(len(Tn)):
-                    if Tn[i]<Tn_eta:
-                        Aeta[i] = 1
-                    elif Tn[i] < 1:
-                        Aeta[i] = np.exp( -(Tn[i]-Tn_eta)/(Tn[i]-Tn[i]*Tn_eta)*np.log(gamma) )
-                    else:
-                        Aeta[i] = 1/gamma*np.exp(minuslamphi)
-                return Aeta
-            E = 4.625e5
-            R = 8.314
-            V = 7.913e-6
-            etaR = 6.22e21
-            TR = 1200+273.15
-            PR = 1.5e9
+class OceanSeisBass(SeisModel): # https://doi.org/10.1029/RF002p0045 https://doi.org/10.1016/j.pepi.2010.09.005
+    def fromThermal(self, therMod):
+        self._therMod = therMod.copy()
+        Ju = 1/(66.5-0.0136*(therMod.T-273.15-900)+1.8*(therMod.P/1e9-0.2))*1e-9
+        vs = 1/np.sqrt(therMod.rho*Ju)
+        self.zdeps = therMod.zdeps
+        self.vs    = vs/1000
 
-            mu_U = (72.45-0.01094*(T-273.15)+1.75*P*1e-9)*1e9
-            eta = etaR * np.exp(E/R*(1/T-1/TR)) * np.exp(V/R*(P/T-PR/TR)) * A_eta(calTn(T,P))
-            tauM = eta/mu_U
-            return tauM
-        
-        def A_P(Tn):
-            ap = np.zeros(Tn.shape)
-            for i in range(len(Tn)):
-                if Tn[i] < 0.91:
-                    ap[i] = 0.01
-                elif Tn[i] < 0.96:
-                    ap[i] = 0.01+0.4*(Tn[i]-0.91)
-                elif Tn[i] < 1:
-                    ap[i] = 0.03
-                else:
-                    ap[i] = 0.03+0
-            return ap
-        def sig_P(Tn):
-            sigp = np.zeros(Tn.shape)
-            for i in range(len(Tn)):
-                if Tn[i]<0.92:
-                    sigp[i] = 4
-                elif Tn[i] < 1:
-                    sigp[i] = 4+37.5*(Tn[i]-0.92)
-                else:
-                    sigp[i] = 7
-            return sigp
-
-        A_B = 0.664
-        tau_np = 6e-5
-        alpha = 0.38
-
-        tau_M = calTauM(T,P)
-        tau_ns = period/(2*np.pi*tau_M)
-
-        J1b = A_B*(tau_ns**alpha)/alpha
-        J1p = np.sqrt(2*np.pi)/2*A_P(calTn(T,P))*sig_P(calTn(T,P))*(1-erf(np.log(tau_np/tau_ns)/(np.sqrt(2)*sig_P(calTn(T,P)))))
-        J2b = np.pi/2* A_B*(tau_ns**alpha)
-        J2p = np.pi/2* (A_P(calTn(T,P))*np.exp(-((np.log(tau_np/tau_ns)/(np.sqrt(2)*sig_P(calTn(T,P))))**2)))
-        J2e = tau_ns
-        J1 = 1+J1b+J1p
-        J2 = J2b+J2p+J2e
-        if verbose:
-            return J1,J2,calTn(T,P)
-        else:
-            return J1,J2
+class OceanSeisStix(SeisModel): # https://doi.org/10.1029/2004JB002965
+    def fromThermal(self, therMod):
+        self._therMod = therMod.copy()
+        vs = 4.77+0.038*therMod.zdeps/29.80-0.000378*(therMod.T-300)
+        self.zdeps = therMod.zdeps
+        self.vs    = vs
 
 class OceanSeisJack(SeisModel):  # https://doi.org/10.1016/j.pepi.2010.09.005
     '''
     Jackson & Faul, 2010: https://doi.org/10.1016/j.pepi.2010.09.005
     Migrated from William Shinevar's matlab function by Ayu, 20220603
     '''
-    def __init__(self,therModel=None,gs=1e-3,period=1) -> None:
-        if therModel is not None:
-            self.fromThermal(therModel,gs,period)
+    def __init__(self,therMod=None,gs=1e-3,period=1) -> None:
+        if therMod is not None:
+            self.fromThermal(therMod,gs,period)
         else:
             self.zdeps = None
             self.vs    = None
     def fromThermal(self,therMod,gs=1e-3,period=1):
-        self._therMod = therMod
+        self._therMod = therMod.copy()
         self.zdeps = therMod.zdeps
         J1,J2,_ = self.creep10(therMod.T,gs,therMod.P,omega=np.pi*2/period)
         Ju = 1/(66.5-0.0136*(therMod.T-273.15-900)+1.8*(therMod.P/1e9-0.2))*1e-9
-        self.vs = 1/np.sqrt(therMod.rho*Ju*J1)
+        self.vs = 1/np.sqrt(therMod.rho*Ju*J1)/1000
         self.qs = J1/J2
-        self.vs_no_anelastic = 1/np.sqrt(therMod.rho*Ju)
+        self.vs_no_anelastic = 1/np.sqrt(therMod.rho*Ju)/1000
         
     @staticmethod
     def creep10(T,gs,pres,omega):
@@ -368,14 +281,15 @@ class OceanSeisJack(SeisModel):  # https://doi.org/10.1016/j.pepi.2010.09.005
         return J1,J2,fM
 
 class OceanSeisPM13(SeisModel): # http://dx.doi.org/10.1016/j.epsl.2013.08.022
-    def __init__(self,therModel=None,period=1) -> None:
-        if therModel is not None:
-            self.fromThermal(therModel,period)
+    def __init__(self,therMod=None,period=1) -> None:
+        if therMod is not None:
+            self.fromThermal(therMod,period)
         else:
             self.zdeps = None
             self.vs    = None
-    def fromThermal(self, therModel,period=1):
-        Ju = 1/(72.66-0.00871*(therModel.T)+2.04*therModel.P/1e9)*1e-9
+    def fromThermal(self, therMod,period=1):
+        self._therMod = therMod.copy()
+        Ju = 1/(72.66-0.00871*(therMod.T)+2.04*therMod.P/1e9)*1e-9
 
         E = 402.9e3 #J/mol
         Va = 7.81e-6 #m^3/mol
@@ -383,7 +297,7 @@ class OceanSeisPM13(SeisModel): # http://dx.doi.org/10.1016/j.epsl.2013.08.022
         Pr = 1.5e9 #Pa
         Tr = 1473 #K
         eta0 = np.power(10,22.38)
-        aStar = np.exp((E+Pr*Va)/(R*Tr) - (E+therModel.P*Va)/(R*therModel.T))
+        aStar = np.exp((E+Pr*Va)/(R*Tr) - (E+therMod.P*Va)/(R*therMod.T))
         eta = eta0/aStar
         
         tauM = Ju*eta
@@ -395,16 +309,14 @@ class OceanSeisPM13(SeisModel): # http://dx.doi.org/10.1016/j.epsl.2013.08.022
 
 
         J1=Ju/F
-        vs = 1/np.sqrt(therModel.rho*J1)
-        self.zdeps = therModel.zdeps
-        self.vs    = vs
-
-
+        vs = 1/np.sqrt(therMod.rho*J1)
+        self.zdeps = therMod.zdeps
+        self.vs    = vs/1000
 
 class OceanSeisYaTa(SeisModel):  # https://doi.org/10.1002/2016JB013316
-    def __init__(self,therModel=None,Tm='Takei2017',period=50) -> None:
-        if therModel is not None:
-            self.fromThermal(therModel,Tm,period)
+    def __init__(self,therMod=None,Tm='Takei2017',period=50) -> None:
+        if therMod is not None:
+            self.fromThermal(therMod,Tm,period)
         else:
             self.zdeps = None
             self.vs    = None
@@ -499,42 +411,41 @@ class OceanSeisYaTa(SeisModel):  # https://doi.org/10.1002/2016JB013316
 
         return J1,J2
 
-    def fromThermal(self,therModel,Tm,period):
-        T,P = therModel.T,therModel.P
+    def fromThermal(self,therMod,Tm,period):
+        self._therMod = therMod.copy()
+        T,P = therMod.T,therMod.P
         Ju = 1/(72.45-0.01094*(T-273.15)+1.987*P/1e9)*1e-9
         J1,J2 = self._anel(T,P,period=period,Tm=Tm)
-        self.zdeps = therModel.zdeps
-        self.vs    = 1/np.sqrt(therModel.rho*Ju*J1)
-        self.vs_unrelaxed = 1/np.sqrt(therModel.rho*Ju)
+        self.zdeps = therMod.zdeps
+        self.vs    = 1/np.sqrt(therMod.rho*Ju*J1)/1000
+        self.vs_unrelaxed = 1/np.sqrt(therMod.rho*Ju)/1000
         self.qs    = J1/J2
 
 class OceanSeisYaTa_unrelaxed(SeisModel):  # https://doi.org/10.1002/2016JB013316
     ''' unrelaxed only!!! '''
-    def fromThermal(self, therModel):
-        Ju = 1/(72.45-0.01094*(therModel.T-273.15)+1.987*therModel.P/1e9)*1e-9
-        vs = 1/np.sqrt(therModel.rho*Ju)
-        self.zdeps = therModel.zdeps
-        self.vs    = vs
+    def fromThermal(self, therMod):
+        self._therMod = therMod.copy()
+        Ju = 1/(72.45-0.01094*(therMod.T-273.15)+1.987*therMod.P/1e9)*1e-9
+        vs = 1/np.sqrt(therMod.rho*Ju)
+        self.zdeps = therMod.zdeps
+        self.vs    = vs/1000
 
 class OceanSeisRuan(OceanSeisYaTa): # https://doi.org/10.1016/j.epsl.2018.05.035
-    def __init__(self,therModel=None,period=50) -> None:
-        if therModel is not None:
-            self.fromThermal(therModel,period)
+    def __init__(self,therMod=None,period=50) -> None:
+        if therMod is not None:
+            self.fromThermal(therMod,period)
         else:
             self.zdeps = None
             self.vs    = None
-    def fromThermal(self,therModel,period=50):
-        T,P = therModel.T,therModel.P
+    def fromThermal(self,therMod,period=50):
+        self._therMod = therMod.copy()
+        T,P = therMod.T,therMod.P
         Ju = 1/(72.45-0.01094*(T-273.15)+1.75*P/1e9)*1e-9
         J1,J2 = self._anel(T,P,period=period,Tm='Ruan2018')
-        self.zdeps = therModel.zdeps
-        self.vs    = 1/np.sqrt(therModel.rho*Ju*J1)
-        self.vs_unrelaxed = 1/np.sqrt(therModel.rho*Ju)
+        self.zdeps = therMod.zdeps
+        self.vs    = 1/np.sqrt(therMod.rho*Ju*J1)/1000
+        self.vs_unrelaxed = 1/np.sqrt(therMod.rho*Ju)/1000
         self.qs    = J1/J2
-
-
-
-
 
 
 def behn2009Shear(freq,d,T,P,coh=100):
@@ -573,6 +484,112 @@ def behn2009Shear(freq,d,T,P,coh=100):
 # Qinv,shearFactor = behn2009Shear(1,1e-3,1000,2,100)
 # J1,J2,_ = seisJack.creep10(1000+273.15,1e-3,2e9,2*np.pi/1)
 
+# deprecated
+class OceanSeisRuan_old(SeisModel):  # https://doi.org/10.1016/j.epsl.2018.05.035
+    def __init__(self,therMod=None,damp=True,YaTaJu=False,period=50) -> None:
+        if therMod is not None:
+            self.fromThermal(therMod,damp,YaTaJu,period)
+        else:
+            self.zdeps = None
+            self.vs    = None
+    def fromThermal(self, therMod,damp=True,YaTaJu=False,period=50):
+        super().fromThermal(therMod)
+        Ju = 1/(72.45-0.01094*(therMod.T-273.15)+1.75*therMod.P/1e9)*1e-9
+        if YaTaJu:
+            Ju = 1/(72.45-0.01094*(therMod.T-273.15)+1.987*therMod.P/1e9)*1e-9
+        J1,J2,Tn = self._calQ_ruan(therMod.T,therMod.P,period=period,damp=damp,verbose=True)
+        self.zdeps = therMod.zdeps
+        self.vs    = 1/np.sqrt(therMod.rho*Ju*J1)
+        # if np.any(Tn>1):
+        #     self.vs[Tn>1] = np.clip(self.vs[Tn>1] * (1-(Tn[Tn>1]-1)/0.001 * 0.078),a_min=0,a_max=10)
+        self.vs_no_anelastic = 1/np.sqrt(therMod.rho*Ju)
+        self.qs    = J1/J2
+        self._Tn = Tn
+    @staticmethod
+    def _calQ_ruan(T,P,period,damp=True,verbose=False):
+        ''' calculate quality factor follow Ruan+(2018) 
+        T: temperature in K
+        P: pressure in Pa
+        period: seismic wave period in second
+        '''
+        from scipy.special import erf
+        
+        def calTn(T,P): # solidus given pressure and temperature
+            P = P/1e9
+            if damp is True:
+                Tm = -5.1*P**2 + 92.5*P + 1120.6 + 273.15
+            elif damp is False:
+                Tm = -5.1*P**2 + 132.9*P + 1120.6 + 273.15
+            else:
+                Tm = damp
+            return T/Tm
+        def calTauM(T,P): # Maxwell time for viscous relaxation
+            def A_eta(Tn):
+                gamma = 5
+                Tn_eta = 0.94
+                minuslamphi = 0
+                Aeta = np.zeros(Tn.shape)
+                for i in range(len(Tn)):
+                    if Tn[i]<Tn_eta:
+                        Aeta[i] = 1
+                    elif Tn[i] < 1:
+                        Aeta[i] = np.exp( -(Tn[i]-Tn_eta)/(Tn[i]-Tn[i]*Tn_eta)*np.log(gamma) )
+                    else:
+                        Aeta[i] = 1/gamma*np.exp(minuslamphi)
+                return Aeta
+            E = 4.625e5
+            R = 8.314
+            V = 7.913e-6
+            etaR = 6.22e21
+            TR = 1200+273.15
+            PR = 1.5e9
+
+            mu_U = (72.45-0.01094*(T-273.15)+1.75*P*1e-9)*1e9
+            eta = etaR * np.exp(E/R*(1/T-1/TR)) * np.exp(V/R*(P/T-PR/TR)) * A_eta(calTn(T,P))
+            tauM = eta/mu_U
+            return tauM
+        
+        def A_P(Tn):
+            ap = np.zeros(Tn.shape)
+            for i in range(len(Tn)):
+                if Tn[i] < 0.91:
+                    ap[i] = 0.01
+                elif Tn[i] < 0.96:
+                    ap[i] = 0.01+0.4*(Tn[i]-0.91)
+                elif Tn[i] < 1:
+                    ap[i] = 0.03
+                else:
+                    ap[i] = 0.03+0
+            return ap
+        def sig_P(Tn):
+            sigp = np.zeros(Tn.shape)
+            for i in range(len(Tn)):
+                if Tn[i]<0.92:
+                    sigp[i] = 4
+                elif Tn[i] < 1:
+                    sigp[i] = 4+37.5*(Tn[i]-0.92)
+                else:
+                    sigp[i] = 7
+            return sigp
+
+        A_B = 0.664
+        tau_np = 6e-5
+        alpha = 0.38
+
+        tau_M = calTauM(T,P)
+        tau_ns = period/(2*np.pi*tau_M)
+
+        J1b = A_B*(tau_ns**alpha)/alpha
+        J1p = np.sqrt(2*np.pi)/2*A_P(calTn(T,P))*sig_P(calTn(T,P))*(1-erf(np.log(tau_np/tau_ns)/(np.sqrt(2)*sig_P(calTn(T,P)))))
+        J2b = np.pi/2* A_B*(tau_ns**alpha)
+        J2p = np.pi/2* (A_P(calTn(T,P))*np.exp(-((np.log(tau_np/tau_ns)/(np.sqrt(2)*sig_P(calTn(T,P))))**2)))
+        J2e = tau_ns
+        J1 = 1+J1b+J1p
+        J2 = J2b+J2p+J2e
+        if verbose:
+            return J1,J2,calTn(T,P)
+        else:
+            return J1,J2
 
 
 if __name__ == '__main__':
@@ -584,12 +601,13 @@ if __name__ == '__main__':
     mod3 = OceanSeisRitz(therMod,RhoType='from_thermal')
 
     plt.figure(figsize=(5.5,8))
-    plt.plot(mod1.vs,mod1.zdeps)
-    plt.plot(mod2.vs,mod2.zdeps)
-    plt.plot(mod3.vs,mod3.zdeps)
+    plt.plot(mod1.vs,mod1.zdeps,label='raw')
+    plt.plot(mod2.vs,mod2.zdeps,label='corrected')
+    plt.plot(mod3.vs,mod3.zdeps,label='from_thermal')
     plt.gca().invert_yaxis()
     mod4 = OceanSeisRitz(HSCM(3.5),RhoType='raw')
-    plt.plot(mod4.vs,mod4.zdeps)
+    plt.plot(mod4.vs,mod4.zdeps,label='3.5Ma')
+    plt.legend()
 
 
     plt.figure(figsize=(5.5,8))

@@ -572,10 +572,10 @@ class CascadiaOcean(MCinv):
         if not super().isgood():
             return False
         
-        z,vs,_,_,_,_,grp = self.seisPropGrids(refLayer=False)
-        indS = np.array(grp)=='sediment'
-        indC = np.array(grp)=='crust'
-        indM = np.array(grp)=='mantle'
+        z,vs,_,_,_,_,grp = self.seisPropGrids(refLayer=False); grp == np.array(grp)
+        indS = grp=='sediment'
+        indC = grp=='crust'
+        indM = grp=='mantle'
         vsS,vsC,vsM = vs[indS],vs[indC],vs[indM]
 
         ''' Vs in sediment > 0.2; from Lili's code '''
@@ -678,7 +678,13 @@ class CascadiaOcean(MCinv):
 
 
 
-def buildModel1D(ymlFile,localInfo={},modelTypeCustom=None,layerClassCustom={}) -> Model1D:
+def buildModel1D(ymlFile,localInfo={},customModels={}, customLayers={}) -> Model1D:
+    import yaml
+    if isinstance(ymlFile,dict):
+        ymlDict = ymlFile
+    else:
+        with open(ymlFile, 'r') as f:
+            ymlDict = yaml.load(f,Loader=yaml.FullLoader)
     modelTypeDict = {
         'General'                           : Model1D,
         'MCInv'                             : MCinv,
@@ -686,19 +692,10 @@ def buildModel1D(ymlFile,localInfo={},modelTypeCustom=None,layerClassCustom={}) 
         'CascadiaPrism'                     : CascadiaPrism,
         'CascadiaContinent'                 : CascadiaContinent
     }
-    import yaml
-    if isinstance(ymlFile,dict):
-        ymlDict = ymlFile
-    else:
-        with open(ymlFile, 'r') as f:
-            ymlDict = yaml.load(f,Loader=yaml.FullLoader)
     try:
-        if modelTypeCustom:
-            mod = modelTypeCustom()
-            mod.loadYML(ymlDict,localInfo,layerClassCustom)
-        else:
-            mod = modelTypeDict[ymlDict['Info'].get('modelType','General')]()
-            mod.loadYML(ymlDict,localInfo)
+        modelTypeDict.update(customModels)
+        mod = modelTypeDict[ymlDict['Info'].get('modelType','General')]()
+        mod.loadYML(ymlDict,localInfo,customLayers)
     except Exception as e:
         raise e
     return mod
@@ -741,8 +738,8 @@ if __name__ == '__main__':
     }
 
     mod = buildModel1D(ymlDict,{'topo':-2,'sedthk':0.5,'lithoAge':4.0},
-            modelTypeCustom=ModelNew,
-            layerClassCustom={'LayerNew':LayerNew})
+                        customModels={'ModelNew':ModelNew},
+                        customLayers={'LayerNew':LayerNew})
     print(mod.forward())
 
 

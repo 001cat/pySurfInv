@@ -6,10 +6,10 @@ from Triforce.pltHead import *
 from Triforce.obspyPlus import randString
 
 class Point(object):
-    def __init__(self,setting=None,localInfo={},modelTypeCustom=None,layerClassCustom={},
+    def __init__(self,setting=None,localInfo={},customModels={},customLayers={},
                  periods=[],vels=[],uncers=[]):
-        self.initMod = buildModel1D(setting,localInfo,modelTypeCustom=modelTypeCustom,
-                                    layerClassCustom=layerClassCustom)
+        self.initMod = buildModel1D(setting,localInfo,customModels=customModels,
+                                    customLayers=customLayers)
         self.obs = {'T':periods,'c':vels,'uncer':uncers} # Rayleigh wave, phase velocity only
         self.pid  = 'test'
     def misfit(self,model=None):
@@ -133,14 +133,14 @@ def _foo_mod_value(varIn):
     return (i,mod.value(zdeps))
 class PostPoint(Point):
     def __init__(self,npzMC=None,npzPriori=None,
-                 modelTypeCustom=None,layerClassCustom={},
+                 customModels={},customLayers={},
                  trueMarkovChain=True):
         if npzMC is not None:
             tmp = np.load(npzMC,allow_pickle=True)
             self.MC,setting,self.obs = tmp['mcTrack'],tmp['setting'][()],tmp['obs'][()]
             self.invMeta = tmp['invMeta'][()]
-            self.initMod = buildModel1D(setting,modelTypeCustom=modelTypeCustom,
-                                        layerClassCustom=layerClassCustom)
+            self.initMod = buildModel1D(setting,customModels=customModels,
+                                        customLayers=customLayers)
                 
             self.N       = self.MC.shape[0]
             self.misfits = self.MC[:,0]
@@ -315,6 +315,7 @@ class PostPoint(Point):
             mod._loadMC(mcParas[ind,:])
             yield mod.copy()
     def _loadValues(self,indVars='all',zdeps=None,indSteps=None,priori=False):
+        indSteps = indSteps if indSteps is not None else (np.where(self.accFinal)[0] if not priori else range(len(self.misfits)))
         if zdeps is not None:
             varIns = [(mod,zdeps,i) for i,mod in enumerate(self._model_generator(indSteps,priori=priori))]
             from multiprocessing import Pool
@@ -327,7 +328,7 @@ class PostPoint(Point):
             # values = np.array([mod.value(zdeps) for mod in self._model_generator(indSteps,priori=priori)])
         else:
             indVars = range(len(self.initMod._brownians())) if indVars == 'all' else indVars
-            mcParas = self.MCparas[self.accFinal] if not priori else self.MCparas_pri[self.accFinal]
+            mcParas = self.MCparas[indSteps] if not priori else self.MCparas_pri[indSteps]
             values = np.array([mc[indVars] for mc in mcParas]).T
         return values
 

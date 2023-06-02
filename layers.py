@@ -90,6 +90,8 @@ class PureLayer(SeisLayer):
                             self.parm['rho'],self.parm['qs'],self.parm['qp']
         return np.array(h),np.array(vs),np.array(vp),np.array(rho),np.array(qs),np.array(qp)
     def H(self,**kwargs):
+        return self._calH(**kwargs)
+    def _calH(self,**kwargs):
         return self.parm['h'].sum()
 
 class PureGrid(SeisLayer):
@@ -101,6 +103,8 @@ class PureGrid(SeisLayer):
                             self.parm['rho'],self.parm['qs'],self.parm['qp']
         return np.array(z),np.array(vs),np.array(vp),np.array(rho),np.array(qs),np.array(qp)
     def H(self, **kwargs):
+        return self._calH(**kwargs)
+    def _calH(self, **kwargs):
         return self.parm['z'][-1] - self.parm['z'][0]
 
 
@@ -139,7 +143,7 @@ class SeisLayerVs(SeisLayer):
 class Sediment(SeisLayerVs):
     def __init__(self,parm={},prop={}) -> None:
         super().__init__(parm,prop)
-        self.prop.update({'LayerName':'LandSediment','Group':'sediment'})
+        self.prop.update({'LayerName':'Sediment','Group':'sediment'})
     def _nFineLayers(self,**kwargs):
         return 1
     def _calVs(self,z,**kwargs):
@@ -157,7 +161,7 @@ class Sediment(SeisLayerVs):
 class Crust(SeisLayerVs):
     def __init__(self,parm={},prop={}) -> None:
         super().__init__(parm,prop)
-        self.prop.update({'LayerName':'LandCrust','Group':'crust'})
+        self.prop.update({'LayerName':'Crust','Group':'crust'})
     def _nFineLayers(self,**kwargs):
         H = self._calH(**kwargs)
         if H >= 150:

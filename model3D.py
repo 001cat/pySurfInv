@@ -15,7 +15,7 @@ def mapSmooth(lons,lats,z,tension=0.0, width=50.):
 
 class Model3D(GeoGrid):
     ''' to avoid bugs in gmt smooth, start/end of lons/lats should be integer '''
-    def __init__(self,lons=[],lats=[]) -> None:
+    def __init__(self,lons=[],lats=[],customModels={},customLayers={}) -> None:
         super().__init__()
         self.lons = np.array(lons)
         self.lats = np.array(lats)
@@ -24,6 +24,8 @@ class Model3D(GeoGrid):
         self._mods_avg  = None
         self.misfits    = [ [None]*len(lons) for _ in range(len(lats))]
         self.disps      = [ [None]*len(lons) for _ in range(len(lats))]
+        self._customModels = customModels
+        self._customLayers = customLayers
     def _addInvPoint(self,lon,lat,postpoint:PostPoint):
         i,j = self._findInd(lon,lat)
         self.mods[i][j]     = postpoint.avgMod.copy()
@@ -33,7 +35,7 @@ class Model3D(GeoGrid):
                                'pvelo':postpoint.obs['c'],
                                'pvelp':postpoint.avgMod.forward(postpoint.obs['T']),
                                'uncer':postpoint.obs['uncer']}
-    def loadInvDir(self,invDir='mcdata'):
+    def loadInvDir(self,invDir='mcdata',postpClass=PostPoint):
         ptlons,ptlats = [],[]
         if len(self.lons) == 0:
             try: # check format and initialize
@@ -52,7 +54,7 @@ class Model3D(GeoGrid):
             ptlon,ptlat = float(ptlon),float(ptlat)
             print(f'Add point {ptlon:.1f}_{ptlat:.1f}')
             try:
-                self._addInvPoint(ptlon,ptlat,PostPoint(npzfile))
+                self._addInvPoint(ptlon,ptlat,postpClass(npzfile,customModels=self._customModels,customLayers=self._customLayers))
             except Exception as e:
                 print(f'Warning: {e}')
 

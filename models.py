@@ -6,7 +6,7 @@ from pySurfInv.utils import plotLayer,plotGrid,_dictIterModifier
 from pySurfInv.brownian import BrownianVar
 
 def monoIncrease(a,eps=np.finfo(float).eps):
-    return np.all(np.diff(a)>=eps)
+    return np.all(np.diff(a)>=-eps)
 
 def _calForward(inProfile,wavetype='Ray',periods=[5,10,20,40,60,80],debug=False):
     import pySurfInv.fast_surf as fast_surf
@@ -572,7 +572,7 @@ class CascadiaOcean(MCinv):
         if not super().isgood():
             return False
         
-        z,vs,_,_,_,_,grp = self.seisPropGrids(refLayer=False); grp == np.array(grp)
+        z,vs,_,_,_,_,grp = self.seisPropGrids(refLayer=False); grp = np.array(grp)
         indS = grp=='sediment'
         indC = grp=='crust'
         indM = grp=='mantle'

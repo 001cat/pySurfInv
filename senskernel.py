@@ -2,6 +2,7 @@ import os,tempfile
 import numpy as np
 import pandas as pd
 from Triforce.pltHead import *
+from pySurfInv.models import Model1D
 
 PREMcsv = os.path.dirname(__file__)+'/senskernel-1.0/Ayu/PREM_senskernel.csv'
 
@@ -83,7 +84,6 @@ class SensKernel():
             plt.plot(kernel[mode,ixtype,iper,:],self.zdeps,label=f'{per}s')
         plt.gca().invert_yaxis()
         plt.legend()
-
 
 class sensModel():
     def __init__(self,df) -> None:
@@ -206,7 +206,12 @@ class SensKernelPert():
         plt.legend()
 
 
-
+def plotKernel(mod:Model1D,Tmin=10,Tmax=80,Tstep=10,dz=1):
+    H,Vs,Vp,Rho,Qs,_,_ = mod.seisPropLayers()
+    df = pd.DataFrame.from_dict({'H':H,'Vp':Vp,'Vs':Vs,'Rho':Rho,'Qs':Qs})
+    sens = SensKernel(model=df,Tmin=Tmin,Tmax=Tmax,Tstep=Tstep,dz=dz)
+    sens.plot()
+    return sens
 
 
 if __name__ == '__main__':

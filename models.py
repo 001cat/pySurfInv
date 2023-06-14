@@ -178,7 +178,7 @@ class PureGird(Model1D):
             self._layers.append(PureGrid(parmLayer,prop={'Group':grp}))
         self.info = info
     def loadYML(self, ymlFile, localInfo={}):
-        raise AttributeError('"Model1D_Puregird" object has no method "loadYML"')
+        raise AttributeError('"Puregird" object has no method "loadYML"')
     @property
     def layers(self):
         return self._layers

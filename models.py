@@ -229,11 +229,11 @@ class MCinv(Model1D):
         for layer in self.layers:
             for k,v in layer.parm.items():
                 if isinstance(v,BrownianVar):
-                    layer.parm[k] = v._setValue(mc[mc_ind]);mc_ind += 1
+                    layer.parm[k] = v._derive(mc[mc_ind]);mc_ind += 1
                 elif type(v) == list:
                     for i in range(len(v)):
                         if isinstance(v[i],BrownianVar):
-                            v[i] = v[i]._setValue(mc[mc_ind]);mc_ind += 1
+                            v[i] = v[i]._derive(mc[mc_ind]);mc_ind += 1
                     layer.parm[k] = v
 
     # miscellaneous for MC inversion

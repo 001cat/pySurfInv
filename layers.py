@@ -177,7 +177,10 @@ class SeisLayerVs(SeisLayer):
 
     def _calH(self, **kwargs):
         if "BottomDepth" in self.parm:
-            z0 = kwargs["layersAbove"][0][-1]
+            if kwargs["layersAbove"][0]:
+                z0 = kwargs["layersAbove"][0][-1]
+            else:
+                z0 = -max(kwargs['modelInfo'].get('topo',0),0)  # may result in problem when in continental basin where topo < 0
             H = self.parm["BottomDepth"] - z0
         else:
             H = self.parm["H"]

@@ -133,28 +133,30 @@ def _foo_mod_value(varIn):
     return (i,mod.value(zdeps))
 class PostPoint(Point):
     def __init__(self,npzMC=None,npzPriori=None,
-                 customModels={},customLayers={},
-                 trueMarkovChain=True):
+                 customModels={},customLayers={}):
         if npzMC is not None:
             tmp = np.load(npzMC,allow_pickle=True)
-            self.MC,setting,self.obs = tmp['mcTrack'],tmp['setting'][()],tmp['obs'][()]
+            self.MCRaw,setting,self.obs = tmp['mcTrack'],tmp['setting'][()],tmp['obs'][()]
             self.invMeta = tmp['invMeta'][()]
             self.initMod = buildModel1D(setting,customModels=customModels,
                                         customLayers=customLayers)
-                
-            self.N       = self.MC.shape[0]
+            
+            self.N          = self.MCRaw.shape[0]
+            self.misfitsRaw = self.MCRaw[:,0]
+            self.LsRaw      = self.MCRaw[:,1]
+            self.accepts    = self.MCRaw[:,2]
+            self.MCparasRaw = self.MCRaw[:,3:]
+
+            self.MC = self.MCRaw.copy()
+            for i in range(self.N):
+                if self.accepts[i]:
+                    iAcc = i
+                else:
+                    self.MC[i,:] = self.MCRaw[iAcc,:]
             self.misfits = self.MC[:,0]
             self.Ls      = self.MC[:,1]
-            self.accepts = self.MC[:,2]
             self.MCparas = self.MC[:,3:]
             self.MCparas_pri = None
-
-            if trueMarkovChain:
-                for i in range(self.N):
-                    if self.accepts[i]:
-                        iAcc = i
-                    else:
-                        self.MCparas[i,:] = self.MCparas[iAcc,:]
 
             indMin = np.nanargmin(self.misfits)
             self.minMod         = self.initMod.copy()
@@ -162,8 +164,9 @@ class PostPoint(Point):
             self.minMod.L       = self.Ls[indMin]
             self.minMod.misfit  = self.misfits[indMin]
 
-            self.thres  = self._thres(self.minMod.misfit)
-            self.accFinal = (self.misfits < self.thres)
+            self.thres          = self._thres(self.minMod.misfit)
+            self.accFinal       = (self.misfits < self.thres)
+            self.accFinalRaw    = (self.misfitsRaw < self.thres)
 
             self.avgMod         = self.initMod.copy()
             self.avgMod._loadMC(np.mean(self.MCparas[self.accFinal,:],axis=0))
@@ -289,12 +292,12 @@ class PostPoint(Point):
     def _check_history(self,yType='ksquare'):
         plt.figure()
         if yType == 'ksquare':
-            y = self.misfits**2*len(self.obs['T'])
+            y = self.misfitsRaw**2*len(self.obs['T'])
             thres = self.thres**2*len(self.obs['T'])
         elif yType == 'likelihood':
-            y = self.Ls; thres = None
+            y = self.LsRaw; thres = None
         elif yType == 'misfit':
-            y = self.misfits; thres = self.thres
+            y = self.misfitsRaw; thres = self.thres
         else:
             raise ValueError(f'Unsupported type of y: {yType}')
         plt.plot(y)
